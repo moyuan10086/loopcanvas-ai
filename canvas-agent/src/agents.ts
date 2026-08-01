@@ -6,17 +6,20 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { AGENT_PROMPT, VERSION } from "./config.js";
-import type { AgentAttachment, AgentEmit } from "./types.js";
+import type { AgentAttachment, AgentEmit, AgentPermissionMode, AgentReasoningEffort } from "./types.js";
 
 type Json = Record<string, unknown>;
 type AgentEvent = Json & { type: string; usage?: unknown };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void };
-type CodexRunOptions = { threadId?: string; cwd?: string };
+type CodexRunOptions = { threadId?: string; cwd?: string; permissionMode?: AgentPermissionMode; model?: string; effort?: AgentReasoningEffort };
+type CodexApprovalDecision = "accept" | "acceptForSession" | "decline";
+type PendingApproval = { id: string | number; method: string; params: Json };
 type AgentHistoryMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; title?: string; text: string; detail?: unknown; streamId?: string };
 
 let codexQueue: Promise<unknown> = Promise.resolve();
 let codexApp: CodexAppClient | null = null;
 let codexThreadId = "";
+let codexPermissionMode: AgentPermissionMode = "request";
 const canvasAgentMcp = canvasAgentMcpCommand();
 const require = createRequire(import.meta.url);
 
@@ -30,9 +33,19 @@ export async function runCodexTurn(prompt: string, emit: AgentEmit, attachments:
     await codexQueue;
 }
 
-export function interruptCodexTurn() {
+export async function interruptCodexTurn() {
     if (!codexApp) return false;
-    return codexApp.interruptCurrentTurn();
+    return await codexApp.interruptCurrentTurn();
+}
+
+export async function listCodexModels(emit: AgentEmit) {
+    codexApp ||= await CodexAppClient.start(emit);
+    return await codexApp.listModels();
+}
+
+export function resolveCodexApproval(requestId: string, decision: CodexApprovalDecision) {
+    if (!codexApp) return false;
+    return codexApp.resolveApproval(requestId, decision);
 }
 
 async function runCodexTurnNow(prompt: string, emit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions) {
@@ -42,13 +55,13 @@ async function runCodexTurnNow(prompt: string, emit: AgentEmit, attachments: Age
         codexApp ||= await CodexAppClient.start(emit);
         let threadId = await ensureCodexThread(codexApp, options, emit);
         try {
-            await codexApp.startTurn(threadId, prompt, files);
+            await codexApp.startTurn(threadId, prompt, files, options);
         } catch (error) {
             if (!isRecoverableThreadError(error)) throw error;
             emit("agent_log", { text: `Codex thread unavailable, starting a new thread: ${errorMessage(error)}` });
             codexThreadId = "";
-            threadId = await ensureCodexThread(codexApp, { cwd: options.cwd }, emit);
-            await codexApp.startTurn(threadId, prompt, files);
+            threadId = await ensureCodexThread(codexApp, { cwd: options.cwd, permissionMode: options.permissionMode }, emit);
+            await codexApp.startTurn(threadId, prompt, files, options);
         }
     } catch (error) {
         emit("agent_error", { message: errorMessage(error) });
@@ -57,19 +70,21 @@ async function runCodexTurnNow(prompt: string, emit: AgentEmit, attachments: Age
     }
 }
 
-export async function startCodexThread(emit: AgentEmit, cwd?: string) {
+export async function startCodexThread(emit: AgentEmit, cwd?: string, permissionMode: AgentPermissionMode = "request") {
     codexApp ||= await CodexAppClient.start(emit);
-    const thread = await codexApp.startThread(cwd);
+    const thread = await codexApp.startThread(cwd, permissionMode);
     codexThreadId = String(field(thread, "id") || "");
+    codexPermissionMode = permissionMode;
     return thread;
 }
 
-export async function resumeCodexThread(emit: AgentEmit, threadId: string, cwd?: string) {
+export async function resumeCodexThread(emit: AgentEmit, threadId: string, cwd?: string, permissionMode: AgentPermissionMode = "request") {
     codexApp ||= await CodexAppClient.start(emit);
     await loadCodexThread(emit, threadId, cwd, false);
-    const thread = await codexApp.resumeThread(threadId, cwd);
+    const thread = await codexApp.resumeThread(threadId, cwd, permissionMode);
     assertThreadWorkspace(thread, cwd);
     codexThreadId = String(field(thread, "id") || threadId);
+    codexPermissionMode = permissionMode;
     return { thread, messages: threadMessages(thread) };
 }
 
@@ -111,13 +126,14 @@ export function runClaudeTurn(prompt: string, emit: AgentEmit) {
 
 async function ensureCodexThread(app: CodexAppClient, options: CodexRunOptions, emit: AgentEmit) {
     if (options.threadId) {
-        if (options.threadId === codexThreadId) return codexThreadId;
+        if (options.threadId === codexThreadId && (options.permissionMode || "request") === codexPermissionMode) return codexThreadId;
         try {
             const result = await app.readThread(options.threadId, false);
             assertThreadWorkspace(field(result, "thread") || {}, options.cwd);
-            const thread = await app.resumeThread(options.threadId, options.cwd);
+            const thread = await app.resumeThread(options.threadId, options.cwd, options.permissionMode);
             assertThreadWorkspace(thread, options.cwd);
             codexThreadId = String(field(thread, "id") || options.threadId);
+            codexPermissionMode = options.permissionMode || "request";
             return codexThreadId;
         } catch (error) {
             if (!isRecoverableThreadError(error)) throw error;
@@ -125,8 +141,9 @@ async function ensureCodexThread(app: CodexAppClient, options: CodexRunOptions, 
         }
     }
     if (!codexThreadId) {
-        const thread = await app.startThread(options.cwd);
+        const thread = await app.startThread(options.cwd, options.permissionMode);
         codexThreadId = String(field(thread, "id") || "");
+        codexPermissionMode = options.permissionMode || "request";
     }
     return codexThreadId;
 }
@@ -144,6 +161,9 @@ class CodexAppClient {
     private pending = new Map<number, PendingRequest>();
     private activeTurns = new Map<string, PendingRequest>();
     private completedTurns = new Map<string, Error | null>();
+    private approvals = new Map<string, PendingApproval>();
+    private currentThreadId = "";
+    private currentTurnId = "";
 
     private constructor(private child: ChildProcess, private emit: AgentEmit) {}
 
@@ -157,6 +177,7 @@ class CodexAppClient {
             client.failAll(`Codex app-server exited: ${code ?? 0}`);
             codexApp = null;
             codexThreadId = "";
+            codexPermissionMode = "request";
             emit("agent_log", { text: `Codex app-server exited: ${code ?? 0}` });
         });
         await client.request("initialize", { clientInfo: { name: "canvas-agent", title: "Infinite Canvas Agent", version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } });
@@ -164,19 +185,23 @@ class CodexAppClient {
         return client;
     }
 
-    async startThread(cwd?: string) {
-        const result = await this.request("thread/start", { approvalPolicy: "never", sandbox: "workspace-write", config: codexConfig(), ...(cwd ? { cwd } : {}), threadSource: "user" });
+    async startThread(cwd?: string, permissionMode: AgentPermissionMode = "request") {
+        const permission = codexPermissionSettings(permissionMode);
+        const result = await this.request("thread/start", { ...permission.thread, config: codexConfig(permissionMode), ...(cwd ? { cwd } : {}), threadSource: "user" });
         const thread = field(result, "thread") as Json | undefined;
         const id = String(field(thread, "id") || "");
         if (!id) throw new Error("Codex app-server 没有返回 thread id");
+        this.currentThreadId = id;
         return thread || {};
     }
 
-    async resumeThread(threadId: string, cwd?: string) {
-        const result = await this.request("thread/resume", { threadId, approvalPolicy: "never", sandbox: "workspace-write", config: codexConfig(), ...(cwd ? { cwd } : {}) });
+    async resumeThread(threadId: string, cwd?: string, permissionMode: AgentPermissionMode = "request") {
+        const permission = codexPermissionSettings(permissionMode);
+        const result = await this.request("thread/resume", { threadId, ...permission.thread, config: codexConfig(permissionMode), ...(cwd ? { cwd } : {}) });
         const thread = field(result, "thread") as Json | undefined;
         const id = String(field(thread, "id") || "");
         if (!id) throw new Error("Codex app-server 没有返回 thread id");
+        this.currentThreadId = id;
         return thread || {};
     }
 
@@ -192,10 +217,23 @@ class CodexAppClient {
         return this.request("thread/archive", { threadId });
     }
 
-    async startTurn(threadId: string, prompt: string, images: string[]) {
-        const result = await this.request("turn/start", { threadId, input: codexInput(prompt, images), approvalPolicy: "never" });
+    async listModels() {
+        return await this.request("model/list", { limit: 100, includeHidden: false });
+    }
+
+    async startTurn(threadId: string, prompt: string, images: string[], options: CodexRunOptions) {
+        const permission = codexPermissionSettings(options.permissionMode);
+        const result = await this.request("turn/start", {
+            threadId,
+            input: codexInput(prompt, images),
+            ...permission.turn,
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.effort ? { effort: options.effort } : {}),
+        });
         const turnId = String(field(field(result, "turn"), "id") || "");
         if (!turnId) throw new Error("Codex app-server 没有返回 turn id");
+        this.currentThreadId = threadId;
+        this.currentTurnId = turnId;
         const completed = this.completedTurns.get(turnId);
         if (this.completedTurns.has(turnId)) {
             this.completedTurns.delete(turnId);
@@ -205,14 +243,28 @@ class CodexAppClient {
         await new Promise((resolve, reject) => this.activeTurns.set(turnId, { resolve, reject }));
     }
 
-    interruptCurrentTurn() {
-        if (this.activeTurns.size === 0) return false;
+    async interruptCurrentTurn() {
+        if (!this.currentThreadId || !this.currentTurnId || this.activeTurns.size === 0) return false;
         try {
-            this.child.kill("SIGINT");
+            [...this.approvals.keys()].forEach((requestId) => this.resolveApproval(requestId, "decline"));
+            await this.request("turn/interrupt", { threadId: this.currentThreadId, turnId: this.currentTurnId });
             return true;
         } catch {
             return false;
         }
+    }
+
+    resolveApproval(requestId: string, decision: CodexApprovalDecision) {
+        const approval = this.approvals.get(requestId);
+        if (!approval) return false;
+        const permissions = field(approval.params, "permissions") as Json | undefined;
+        const result = approval.method === "item/permissions/requestApproval"
+            ? { permissions: decision === "decline" ? {} : permissions || {}, scope: decision === "acceptForSession" ? "session" : "turn" }
+            : { decision };
+        this.write({ id: approval.id, result });
+        this.approvals.delete(requestId);
+        this.emit("codex_approval_resolved", { requestId, decision, method: approval.method });
+        return true;
     }
 
     private request(method: string, params: unknown) {
@@ -243,16 +295,22 @@ class CodexAppClient {
     }
 
     private handle(message: Json) {
+        if (typeof message.method === "string" && "id" in message) return this.answerServerRequest(message);
         const id = Number(message.id);
         if (message.error && this.pending.has(id)) return this.reject(id, String(field(message.error, "message") || "Codex request failed"));
         if (this.pending.has(id)) return this.resolve(id, message.result);
-        if (typeof message.method === "string" && "id" in message) return this.answerServerRequest(message);
         if (typeof message.method === "string") this.handleNotification(message.method, (message.params || {}) as Json);
     }
 
     private handleNotification(method: string, params: Json) {
         if (method === "item/agentMessage/delta") return this.emitDelta(params);
         if (method === "thread/tokenUsage/updated") this.lastUsage = normalizeUsage(params);
+        if (method === "serverRequest/resolved") {
+            const requestId = String(field(params, "requestId") || field(params, "id") || "");
+            if (requestId) this.approvals.delete(requestId);
+            this.emit("codex_approval_resolved", { requestId, method, params });
+            return;
+        }
         const event = normalizeCodexNotification(method, params);
         if (!event) return;
         if (event.type === "turn.completed") event.usage = this.lastUsage;
@@ -269,6 +327,7 @@ class CodexAppClient {
             }
             this.emit("agent_event", { agent: "codex", type: "stream.summary", delta_count: this.deltaCount });
             this.deltaCount = 0;
+            if (turnId === this.currentTurnId) this.currentTurnId = "";
             this.emit("agent_done", { agent: "codex", usage: event.usage });
         }
     }
@@ -283,7 +342,20 @@ class CodexAppClient {
 
     private answerServerRequest(message: Json) {
         const method = String(message.method);
-        const result = method === "mcpServer/elicitation/request" ? { action: "accept", content: {}, _meta: null } : { decision: "decline" };
+        if (method === "mcpServer/elicitation/request") {
+            const result = { action: "accept", content: {}, _meta: null };
+            this.write({ id: message.id, result });
+            this.emit("agent_event", { agent: "codex", type: "server.request", method, params: message.params, result });
+            return;
+        }
+        if (CODEX_APPROVAL_METHODS.has(method)) {
+            const requestId = String(message.id);
+            const params = (message.params || {}) as Json;
+            this.approvals.set(requestId, { id: message.id as string | number, method, params });
+            this.emit("codex_approval", { requestId, method, params });
+            return;
+        }
+        const result = { decision: "decline" };
         this.write({ id: message.id, result });
         this.emit("agent_event", { agent: "codex", type: "server.request", method, params: message.params, result });
     }
@@ -300,10 +372,17 @@ class CodexAppClient {
 
     failAll(message: string) {
         [...this.pending.values(), ...this.activeTurns.values()].forEach((item) => item.reject(new Error(message)));
+        this.approvals.forEach((approval, requestId) => this.emit("codex_approval_resolved", { requestId, method: approval.method, reason: message }));
         this.pending.clear();
         this.activeTurns.clear();
+        this.completedTurns.clear();
+        this.approvals.clear();
+        this.currentThreadId = "";
+        this.currentTurnId = "";
     }
 }
+
+const CODEX_APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"]);
 
 function canvasAgentMcpCommand() {
     const current = process.argv.find((arg) => /index\.(t|j)s$/.test(arg)) || "";
@@ -312,8 +391,25 @@ function canvasAgentMcpCommand() {
     return entry.endsWith(".ts") ? { command: process.execPath, args: [tsx, entry, "mcp"] } : { command: process.execPath, args: [entry, "mcp"] };
 }
 
-function codexConfig() {
-    return { mcp_servers: { "infinite-canvas": { command: canvasAgentMcp.command, args: canvasAgentMcp.args, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
+function codexConfig(permissionMode: AgentPermissionMode = "request") {
+    return {
+        model_reasoning_summary: "auto",
+        ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}),
+        mcp_servers: { "infinite-canvas": { command: canvasAgentMcp.command, args: canvasAgentMcp.args, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } },
+    };
+}
+
+function codexPermissionSettings(permissionMode: AgentPermissionMode = "request") {
+    if (permissionMode === "full") {
+        return {
+            thread: { approvalPolicy: "never", sandbox: "danger-full-access" },
+            turn: { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } },
+        };
+    }
+    return {
+        thread: { approvalPolicy: "on-request", sandbox: "workspace-write" },
+        turn: { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", networkAccess: false } },
+    };
 }
 
 function codexInput(prompt: string, images: string[]) {

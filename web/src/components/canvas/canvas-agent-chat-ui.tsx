@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Tooltip } from "antd";
-import { ArrowUp, CheckCircle2, CircleAlert, ImagePlus, LoaderCircle, Square, UserRound, Wrench, X, XCircle } from "lucide-react";
+import { Button, Select, Tooltip } from "antd";
+import { ArrowUp, BrainCircuit, CheckCircle2, CircleAlert, Cpu, ImagePlus, LoaderCircle, ShieldCheck, Square, UserRound, Wrench, X, XCircle } from "lucide-react";
 import { Streamdown } from "streamdown";
 
 import { isPlainEnterKey } from "@/lib/keyboard-event";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { LocalUser } from "@/stores/use-user-store";
+import { useAgentStore, type AgentApprovalDecision, type AgentPendingApproval, type AgentPermissionMode, type AgentReasoningEffort } from "@/stores/use-agent-store";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
 export type CanvasAgentChatMessage = {
@@ -100,6 +101,92 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
                     </div>
                 ) : null}
             </div>
+        </div>
+    );
+}
+
+export function AgentApprovalCard({ approval, theme, disabled, onDecision }: { approval: AgentPendingApproval; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; disabled?: boolean; onDecision: (decision: AgentApprovalDecision) => void }) {
+    const copy = approvalCopy(approval);
+    return (
+        <div className="flex items-start gap-3">
+            <AgentAvatar theme={theme} />
+            <div className="min-w-0 flex-1 rounded-xl border px-4 py-3.5" style={{ borderColor: "rgba(217,119,6,.28)", background: "rgba(217,119,6,.035)", color: theme.node.text }}>
+                <div className="flex items-start gap-3">
+                    <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg" style={{ color: "#d97706", background: "rgba(217,119,6,.10)" }}>
+                        <ShieldCheck className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold">{copy.title}</div>
+                        <div className="mt-1 break-words text-xs leading-5" style={{ color: theme.node.muted }}>{copy.summary}</div>
+                    </div>
+                </div>
+                <details className="mt-3 text-xs">
+                    <summary className="cursor-pointer select-none" style={{ color: theme.node.muted }}>查看请求详情</summary>
+                    <AgentDetailBlock detail={approval.params} theme={theme} />
+                </details>
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <Button size="small" danger disabled={disabled} onClick={() => onDecision("decline")}>拒绝</Button>
+                    <Button size="small" disabled={disabled} onClick={() => onDecision("accept")}>仅本次允许</Button>
+                    <Button size="small" type="primary" disabled={disabled} onClick={() => onDecision("acceptForSession")}>本会话允许</Button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export function AgentRunControls({ theme, disabled }: {
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    disabled?: boolean;
+}) {
+    const { permissionMode, models, model, reasoningEffort, setAgentState } = useAgentStore();
+    const selectedModel = models.find((item) => item.model === model || item.id === model);
+    const efforts = selectedModel?.supportedReasoningEfforts?.length
+        ? selectedModel.supportedReasoningEfforts.map((item) => ({ value: item.reasoningEffort, label: reasoningLabel(item.reasoningEffort) }))
+        : ALL_REASONING_EFFORTS.map((value) => ({ value, label: reasoningLabel(value) }));
+    return (
+        <div className="thin-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto" onWheelCapture={(event) => event.stopPropagation()}>
+            <Tooltip title={permissionDescription(permissionMode)}>
+                <Select
+                    size="small"
+                    variant="borderless"
+                    disabled={disabled}
+                    value={permissionMode}
+                    className="min-w-[108px]"
+                    prefix={<ShieldCheck className="size-3.5" style={{ color: permissionMode === "full" ? "#d97706" : theme.node.muted }} />}
+                    options={PERMISSION_OPTIONS}
+                    onChange={(permissionMode) => setAgentState({ permissionMode })}
+                />
+            </Tooltip>
+            <Tooltip title="选择 Codex 模型">
+                <Select
+                    size="small"
+                    variant="borderless"
+                    disabled={disabled || !models.length}
+                    value={model || undefined}
+                    placeholder={models.length ? "默认模型" : "读取模型"}
+                    className="min-w-[116px] max-w-[156px]"
+                    prefix={<Cpu className="size-3.5" style={{ color: theme.node.muted }} />}
+                    options={models.map((item) => ({ value: item.model, label: item.displayName || item.model }))}
+                    onChange={(model) => {
+                        const selected = models.find((item) => item.model === model);
+                        setAgentState({ model, reasoningEffort: selected?.defaultReasoningEffort || reasoningEffort });
+                    }}
+                />
+            </Tooltip>
+            <Tooltip title="推理强度会影响速度与 token 消耗">
+                <Select
+                    size="small"
+                    variant="borderless"
+                    allowClear
+                    disabled={disabled}
+                    value={reasoningEffort || undefined}
+                    placeholder="自动推理"
+                    className="min-w-[104px]"
+                    prefix={<BrainCircuit className="size-3.5" style={{ color: theme.node.muted }} />}
+                    options={efforts}
+                    onChange={(reasoningEffort) => setAgentState({ reasoningEffort: reasoningEffort || "" })}
+                />
+            </Tooltip>
         </div>
     );
 }
@@ -316,4 +403,35 @@ function normalizeText(value: unknown) {
 
 function objectField(value: unknown, key: string) {
     return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+const ALL_REASONING_EFFORTS: AgentReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+const PERMISSION_OPTIONS: { value: AgentPermissionMode; label: string }[] = [
+    { value: "request", label: "请求批准" },
+    { value: "automatic", label: "自动审查" },
+    { value: "full", label: "完全访问" },
+];
+
+function reasoningLabel(value: AgentReasoningEffort) {
+    return ({ minimal: "最低", low: "轻度", medium: "中等", high: "高", xhigh: "极高", max: "最高", ultra: "Ultra" } as const)[value];
+}
+
+function permissionDescription(value: AgentPermissionMode) {
+    if (value === "full") return "不再询问，允许访问工作区外文件与网络。仅在明确需要时使用。";
+    if (value === "automatic") return "Codex 自动审查常规操作，高风险操作仍会请求你批准。";
+    return "文件修改、命令和额外权限由你逐项批准。";
+}
+
+function approvalCopy(approval: AgentPendingApproval) {
+    const params = approval.params;
+    if (approval.method === "item/commandExecution/requestApproval") {
+        const command = String(objectField(params, "command") || objectField(params, "reason") || "Codex 请求执行命令");
+        return { title: "允许执行命令？", summary: command };
+    }
+    if (approval.method === "item/fileChange/requestApproval") {
+        const reason = String(objectField(params, "reason") || "Codex 请求修改文件");
+        return { title: "允许修改文件？", summary: reason };
+    }
+    const permissions = objectField(params, "permissions");
+    return { title: "允许额外权限？", summary: permissions ? JSON.stringify(permissions) : "Codex 请求扩展当前任务的访问范围" };
 }

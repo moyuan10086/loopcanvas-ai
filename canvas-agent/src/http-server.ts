@@ -3,8 +3,8 @@ import { request as requestUpstream } from "undici";
 
 import { canvasProjectsRevision, DEFAULT_PORT, ensureSiteWorkspace, listCanvasFiles, loadAiConfig, loadApiUsage, loadCanvasProjects, loadConfig, readCanvasFile, saveAiConfig, saveApiUsage, saveCanvasFile, saveCanvasProjects, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "./config.js";
 import { CanvasSession } from "./canvas-session.js";
-import { archiveCodexThread, interruptCodexTurn, listCodexThreads, readCodexThread, resumeCodexThread, runClaudeTurn, runCodexTurn, startCodexThread, summarizeCodexThread, verifyCodexThreadWorkspace, withAgentPrompt } from "./agents.js";
-import type { AgentAttachment } from "./types.js";
+import { archiveCodexThread, interruptCodexTurn, listCodexModels, listCodexThreads, readCodexThread, resolveCodexApproval, resumeCodexThread, runClaudeTurn, runCodexTurn, startCodexThread, summarizeCodexThread, verifyCodexThreadWorkspace, withAgentPrompt } from "./agents.js";
+import type { AgentAttachment, AgentPermissionMode, AgentReasoningEffort } from "./types.js";
 import { scrapeModelPrices } from "./model-pricing.js";
 
 export function startHttpServer() {
@@ -196,14 +196,25 @@ export function startHttpServer() {
         const workspace = ensureSiteWorkspace(config);
         res.json({ ok: true, workspace });
     });
+    app.get("/agent/codex/models", route(async (_req, res) => {
+        const result = await listCodexModels(emit);
+        res.json({ ok: true, result });
+    }));
+    app.post("/agent/codex/approval", (req, res) => {
+        const requestId = String(req.body?.requestId || "");
+        const decision = codexApprovalDecision(req.body?.decision);
+        if (!requestId || !decision) return void res.status(400).json({ ok: false, error: "invalid approval" });
+        if (!resolveCodexApproval(requestId, decision)) return void res.status(404).json({ ok: false, error: "approval not found" });
+        res.json({ ok: true });
+    });
     app.get("/agent/codex/threads", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const result = await listCodexThreads(emit, { cwd: workspace.workspacePath, searchTerm: String(req.query.searchTerm || "") });
         res.json({ ok: true, workspace, ...result });
     }));
-    app.post("/agent/codex/threads/new", route(async (_req, res) => {
+    app.post("/agent/codex/threads/new", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
-        const thread = await startCodexThread(emit, workspace.workspacePath);
+        const thread = await startCodexThread(emit, workspace.workspacePath, agentPermissionMode(req.body?.permissionMode));
         const activeThreadId = String((thread as Record<string, unknown>).id || "");
         updateSiteWorkspace(config, { activeThreadId });
         res.json({ ok: true, workspace: { ...workspace, activeThreadId }, thread: summarizeCodexThread(thread), messages: [] });
@@ -216,7 +227,7 @@ export function startHttpServer() {
     app.post("/agent/codex/threads/:threadId/resume", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const threadId = routeParam(req.params.threadId);
-        const result = await resumeCodexThread(emit, threadId, workspace.workspacePath);
+        const result = await resumeCodexThread(emit, threadId, workspace.workspacePath, agentPermissionMode(req.body?.permissionMode));
         updateSiteWorkspace(config, { activeThreadId: threadId });
         res.json({ ok: true, workspace: { ...workspace, activeThreadId: threadId }, ...result });
     }));
@@ -229,23 +240,26 @@ export function startHttpServer() {
     }));
     app.post("/agent/codex/turn", route(async (req, res) => {
         const attachments = Array.isArray(req.body?.attachments) ? (req.body.attachments as AgentAttachment[]) : [];
+        const permissionMode = agentPermissionMode(req.body?.permissionMode);
+        const model = String(req.body?.model || "").trim();
+        const effort = agentReasoningEffort(req.body?.effort);
         const workspace = ensureSiteWorkspace(config);
         let threadId = String(req.body?.threadId || workspace.activeThreadId || "");
         if (!threadId) {
-            const thread = await startCodexThread(emit, workspace.workspacePath);
+            const thread = await startCodexThread(emit, workspace.workspacePath, permissionMode);
             threadId = String((thread as Record<string, unknown>).id || "");
             updateSiteWorkspace(config, { activeThreadId: threadId });
         } else if (threadId !== workspace.activeThreadId) {
             await verifyCodexThreadWorkspace(emit, threadId, workspace.workspacePath);
             updateSiteWorkspace(config, { activeThreadId: threadId });
         }
-        void runCodexTurn(withAgentPrompt(String(req.body?.prompt || "")), emit, attachments, { threadId, cwd: workspace.workspacePath });
+        void runCodexTurn(withAgentPrompt(String(req.body?.prompt || "")), emit, attachments, { threadId, cwd: workspace.workspacePath, permissionMode, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
         res.json({ ok: true, threadId });
     }));
-    app.post("/agent/codex/interrupt", (_req, res) => {
-        const ok = interruptCodexTurn();
+    app.post("/agent/codex/interrupt", route(async (_req, res) => {
+        const ok = await interruptCodexTurn();
         res.json({ ok });
-    });
+    }));
     app.post("/agent/claude/turn", (req, res) => {
         runClaudeTurn(withAgentPrompt(String(req.body?.prompt || "")), emit);
         res.json({ ok: true });
@@ -269,6 +283,18 @@ function route(handler: (req: Request, res: Response) => Promise<unknown>) {
 
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
+}
+
+function agentPermissionMode(value: unknown): AgentPermissionMode {
+    return value === "automatic" || value === "full" ? value : "request";
+}
+
+function agentReasoningEffort(value: unknown): AgentReasoningEffort | undefined {
+    return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max" || value === "ultra" ? value : undefined;
+}
+
+function codexApprovalDecision(value: unknown) {
+    return value === "accept" || value === "acceptForSession" || value === "decline" ? value : undefined;
 }
 
 function requestUrl(req: Request, config: CanvasAgentConfig) {

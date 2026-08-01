@@ -7,6 +7,18 @@ export type AgentAttachment = { id: string; name: string; type: string; size: nu
 export type AgentChatItem = { id: string; role: AgentChatRole; title?: string; text: string; meta?: string; detail?: unknown; attachments?: AgentAttachment[]; streamId?: string };
 export type AgentEventLog = { id: string; time: string; title: string; text: string; raw?: unknown };
 export type AgentPendingToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[]; path?: string } & Record<string, unknown> };
+export type AgentPermissionMode = "request" | "automatic" | "full";
+export type AgentReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type AgentModel = {
+    id: string;
+    model: string;
+    displayName: string;
+    defaultReasoningEffort?: AgentReasoningEffort;
+    supportedReasoningEfforts?: { reasoningEffort: AgentReasoningEffort; description?: string }[];
+    isDefault?: boolean;
+};
+export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline";
+export type AgentPendingApproval = { requestId: string; method: string; params: Record<string, unknown> };
 export type AgentCanvasContext = { snapshot: CanvasAgentSnapshot; applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot; undoOps: () => CanvasAgentSnapshot | null; canUndo: boolean };
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentPanelTab = "chat" | "setup" | "history" | "log";
@@ -38,9 +50,14 @@ type AgentStore = {
     loadingThreads: boolean;
     activeTab: AgentPanelTab;
     confirmTools: boolean;
+    permissionMode: AgentPermissionMode;
+    models: AgentModel[];
+    model: string;
+    reasoningEffort: AgentReasoningEffort | "";
     activity: string;
     connectError: string;
     pendingTool: AgentPendingToolCall | null;
+    pendingApprovals: AgentPendingApproval[];
     setAgentState: (patch: Partial<Omit<AgentStore, "setAgentState" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
     openPanel: () => void;
     closePanel: () => void;
@@ -78,10 +95,22 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     loadingThreads: false,
     activeTab: "setup",
     confirmTools: true,
+    permissionMode: storedPermissionMode(),
+    models: [],
+    model: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-model") || "",
+    reasoningEffort: storedReasoningEffort(),
     activity: "就绪",
     connectError: "",
     pendingTool: null,
-    setAgentState: (patch) => set(patch),
+    pendingApprovals: [],
+    setAgentState: (patch) => {
+        if (typeof window !== "undefined") {
+            if (patch.permissionMode) localStorage.setItem("canvas-agent-permission-mode", patch.permissionMode);
+            if (typeof patch.model === "string") localStorage.setItem("canvas-agent-model", patch.model);
+            if (typeof patch.reasoningEffort === "string") localStorage.setItem("canvas-agent-reasoning-effort", patch.reasoningEffort);
+        }
+        set(patch);
+    },
     openPanel: () => set({ panelOpen: true, panelMounted: true, panelClosing: false }),
     closePanel: () => {
         if (!get().panelMounted || get().panelClosing) return;
@@ -119,3 +148,15 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     addEventLog: (item) => set((state) => ({ eventLogs: [...state.eventLogs.slice(-160), item] })),
     clearEventLogs: () => set({ eventLogs: [] }),
 }));
+
+function storedPermissionMode(): AgentPermissionMode {
+    if (typeof window === "undefined") return "request";
+    const value = localStorage.getItem("canvas-agent-permission-mode");
+    return value === "automatic" || value === "full" ? value : "request";
+}
+
+function storedReasoningEffort(): AgentReasoningEffort | "" {
+    if (typeof window === "undefined") return "";
+    const value = localStorage.getItem("canvas-agent-reasoning-effort");
+    return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max" || value === "ultra" ? value : "";
+}

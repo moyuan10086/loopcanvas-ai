@@ -8,13 +8,13 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { useAgentStore, type AgentAttachment, type AgentChatItem, type AgentEventLog, type AgentPanelTab, type AgentPendingToolCall, type AgentThreadSummary } from "@/stores/use-agent-store";
+import { useAgentStore, type AgentApprovalDecision, type AgentAttachment, type AgentChatItem, type AgentEventLog, type AgentModel, type AgentPanelTab, type AgentPendingApproval, type AgentPendingToolCall, type AgentThreadSummary } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { flushCanvasBackendSave, initializeCanvasSync } from "@/services/canvas-sync";
 import { refreshApiUsageLogs } from "@/services/api-usage";
 import { summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool, SITE_TOOL_LABELS } from "@/lib/agent/agent-site-tools";
-import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentPendingToolCard, AgentWorkingMessage, type CanvasAgentChatAttachment } from "./canvas-agent-chat-ui";
+import { AgentApprovalCard, AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentPendingToolCard, AgentRunControls, AgentWorkingMessage, type CanvasAgentChatAttachment } from "./canvas-agent-chat-ui";
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
@@ -42,6 +42,7 @@ type AgentWorkspace = { workspacePath: string; activeThreadId?: string };
 type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; data?: AgentThreadSummary[] };
 type AgentThreadResponse = { ok?: boolean; workspace?: AgentWorkspace; thread?: AgentThreadSummary; messages?: AgentChatItem[] };
 type AgentConfigResponse = { ok?: boolean; url?: string; token?: string; hasToken?: boolean };
+type AgentModelsResponse = { ok?: boolean; result?: unknown };
 
 function syncCanvasProjectsAfterAgentConnection() {
     const sync = () => {
@@ -69,7 +70,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
     const { message, modal } = App.useApp();
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    const { width, url, token, connected, enabled, prompt, attachments, sending, waiting, messages, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, activity, connectError, pendingTool, canvasContext, setAgentState, addMessage: pushMessage, addEventLog: pushEventLog, clearEventLogs } = useAgentStore();
+    const { url, token, connected, enabled, prompt, attachments, sending, waiting, messages, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, permissionMode, models, model, reasoningEffort, activity, connectError, pendingTool, pendingApprovals, canvasContext, setAgentState, addMessage: pushMessage, addEventLog: pushEventLog, clearEventLogs } = useAgentStore();
     const listRef = useRef<HTMLDivElement>(null);
     const canvasContextRef = useRef(canvasContext);
     const confirmToolsRef = useRef(confirmTools);
@@ -103,6 +104,23 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             setAgentState({ loadingThreads: false });
         }
     }, [endpoint, setAgentState, token]);
+    const loadModels = useCallback(async () => {
+        try {
+            const data = await fetchAgentJson<AgentModelsResponse>(endpoint, token, "/agent/codex/models");
+            const nextModels = normalizeCodexModels(data.result);
+            const current = useAgentStore.getState();
+            const selected = nextModels.find((item) => item.model === current.model || item.id === current.model)
+                || nextModels.find((item) => item.isDefault)
+                || nextModels[0];
+            const supported = selected?.supportedReasoningEfforts || [];
+            const nextEffort = current.reasoningEffort && (!supported.length || supported.some((item) => item.reasoningEffort === current.reasoningEffort))
+                ? current.reasoningEffort
+                : selected?.defaultReasoningEffort || "";
+            setAgentState({ models: nextModels, model: selected?.model || "", reasoningEffort: nextEffort });
+        } catch (error) {
+            addEventLog("读取模型失败", error);
+        }
+    }, [endpoint, setAgentState, token]);
 
     useEffect(() => {
         canvasContextRef.current = canvasContext;
@@ -132,6 +150,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
             syncCanvasProjectsAfterAgentConnection();
             void refreshApiUsageLogs();
+            void loadModels();
         });
         source.addEventListener("tool_call", (event) => {
             const data = parseEventData<AgentPendingToolCall>(event);
@@ -141,18 +160,31 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             const data = parseEventData<AgentEventPayload>(event);
             if (data) handleAgentEvent(data);
         });
+        source.addEventListener("codex_approval", (event) => {
+            const approval = parseEventData<AgentPendingApproval>(event);
+            if (!approval?.requestId) return;
+            const current = useAgentStore.getState().pendingApprovals;
+            setAgentState({ pendingApprovals: [...current.filter((item) => item.requestId !== approval.requestId), approval], activity: "等待授权", waiting: true });
+            addEventLog("Codex 请求授权", approval, approval);
+        });
+        source.addEventListener("codex_approval_resolved", (event) => {
+            const result = parseEventData<{ requestId?: string; decision?: AgentApprovalDecision }>(event);
+            if (!result?.requestId) return;
+            setAgentState({ pendingApprovals: useAgentStore.getState().pendingApprovals.filter((item) => item.requestId !== result.requestId), activity: "继续执行", waiting: true });
+            addEventLog("Codex 授权已处理", result, result);
+        });
         source.addEventListener("agent_log", (event) => {
             const text = parseEventData<{ text?: unknown }>(event)?.text;
             addEventLog("日志", text, text);
         });
         source.addEventListener("agent_error", (event) => {
             const message = parseEventData<{ message?: unknown }>(event)?.message;
-            setAgentState({ activity: "出错", waiting: false });
+            setAgentState({ activity: "出错", waiting: false, pendingApprovals: [] });
             addMessage({ role: "error", title: "错误", text: normalizeText(message) });
             addEventLog("错误", message, message);
         });
         source.addEventListener("agent_done", () => {
-            setAgentState({ activity: "完成", waiting: false, sending: false });
+            setAgentState({ activity: "完成", waiting: false, sending: false, pendingApprovals: [] });
             void loadThreads();
         });
         source.onerror = () => {
@@ -175,7 +207,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             source.close();
             connectedRef.current = false;
         };
-    }, [enabled, endpoint, loadThreads, message, setAgentState, token]);
+    }, [enabled, endpoint, loadModels, loadThreads, message, setAgentState, token]);
 
     useEffect(() => {
         if (connected) void loadThreads();
@@ -198,9 +230,9 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         }
         setAgentState({ activity: "发送中", sending: true, waiting: true });
         addMessage({ role: "user", text: text || "发送了图片", attachments: files });
-        addEventLog("用户发送", { text, attachments: files.map(({ name, type, size }) => ({ name, type, size })) });
+        addEventLog("用户发送", { text, model, effort: reasoningEffort || "auto", permissionMode, attachments: files.map(({ name, type, size }) => ({ name, type, size })) });
         try {
-            const res = await fetch(`${endpoint}/agent/codex/turn?token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: requestPrompt, threadId: useAgentStore.getState().activeThreadId || undefined, attachments: files.map(({ name, type, dataUrl }) => ({ name, type, dataUrl })) }) });
+            const res = await fetch(`${endpoint}/agent/codex/turn?token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: requestPrompt, threadId: useAgentStore.getState().activeThreadId || undefined, permissionMode, model: model || undefined, effort: reasoningEffort || undefined, attachments: files.map(({ name, type, dataUrl }) => ({ name, type, dataUrl })) }) });
             if (!res.ok) throw new Error("本地 Agent 拒绝了请求");
             const data = (await res.json()) as { threadId?: string };
             if (data.threadId) setAgentState({ activeThreadId: data.threadId });
@@ -224,10 +256,21 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         setAgentState({ activity: "停止中" });
         try {
             await fetch(`${endpoint}/agent/codex/interrupt?token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" } });
-            setAgentState({ activity: "已停止", sending: false, waiting: false });
+            setAgentState({ activity: "已停止", sending: false, waiting: false, pendingApprovals: [] });
             addEventLog("用户停止", {});
         } catch {
             setAgentState({ activity: "就绪", sending: false, waiting: false });
+        }
+    };
+
+    const resolveApproval = async (approval: AgentPendingApproval, decision: AgentApprovalDecision) => {
+        try {
+            const res = await fetch(`${endpoint}/agent/codex/approval?token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId: approval.requestId, decision }) });
+            if (!res.ok) throw new Error(res.status === 404 ? "该授权请求已经失效" : "本地 Agent 未接受授权决定");
+            setAgentState({ pendingApprovals: useAgentStore.getState().pendingApprovals.filter((item) => item.requestId !== approval.requestId), activity: decision === "decline" ? "已拒绝，继续执行" : "已授权，继续执行", waiting: true });
+        } catch (error) {
+            addEventLog("处理授权失败", error);
+            message.error(error instanceof Error ? error.message : "处理授权失败");
         }
     };
 
@@ -410,6 +453,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             waiting: false,
             sending: false,
             pendingTool: null,
+            pendingApprovals: [],
             ...patch,
         });
         pendingToolRef.current = null;
@@ -419,7 +463,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         if (!connected) return;
         setAgentState({ loadingThreads: true });
         try {
-            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionMode }) });
             setAgentState({ activeThreadId: data.thread?.id || data.workspace?.activeThreadId || "", messages: [], activeTab: "chat", activity: "新对话" });
             await loadThreads();
         } catch (error) {
@@ -434,7 +478,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         if (!connected || !threadId) return;
         setAgentState({ loadingThreads: true });
         try {
-            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, `/agent/codex/threads/${encodeURIComponent(threadId)}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, `/agent/codex/threads/${encodeURIComponent(threadId)}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionMode }) });
             setAgentState({ activeThreadId: data.thread?.id || threadId, messages: normalizeHistoryMessages(data.messages || []), activeTab: "chat", activity: "已恢复会话" });
             await loadThreads();
         } catch (error) {
@@ -583,7 +627,8 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                             <AgentChatMessage key={item.id} item={agentMessageToChatMessage(item)} theme={theme} user={user} />
                         ))}
                         {pendingTool ? <AgentPendingToolCard summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)} detail={{ requestId: pendingTool.requestId, name: pendingTool.name, input: pendingTool.input }} theme={theme} onReject={rejectPendingTool} onApprove={approvePendingTool} /> : null}
-                        {waiting && !pendingTool ? <AgentWorkingMessage theme={theme} /> : null}
+                        {pendingApprovals.map((approval) => <AgentApprovalCard key={approval.requestId} approval={approval} theme={theme} onDecision={(decision) => void resolveApproval(approval, decision)} />)}
+                        {waiting && !pendingTool && !pendingApprovals.length ? <AgentWorkingMessage theme={theme} /> : null}
                     </div>
                     <AgentChatComposer
                         prompt={prompt}
@@ -597,7 +642,15 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                         onStop={stopTurn}
                         onAddFiles={addAttachments}
                         onRemoveAttachment={removeAttachment}
-                        left={attachments.length ? <span className="text-[11px]" style={{ color: theme.node.muted }}>{formatBytes(attachmentPayloadBytes(attachments))} / 30MB</span> : null}
+                        left={
+                            <div className="flex min-w-0 items-center gap-1">
+                                <AgentRunControls
+                                    theme={theme}
+                                    disabled={!connected || sending || waiting}
+                                />
+                                {attachments.length ? <span className="shrink-0 text-[10px]" style={{ color: theme.node.muted }}>{formatBytes(attachmentPayloadBytes(attachments))}</span> : null}
+                            </div>
+                        }
                     />
                 </>
             )}
@@ -856,6 +909,38 @@ function parseEventData<T>(event: Event) {
     } catch {
         return null;
     }
+}
+
+function normalizeCodexModels(result: unknown): AgentModel[] {
+    const payload = result && typeof result === "object" ? result as Record<string, unknown> : {};
+    const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+    const seen = new Set<string>();
+    return rows.flatMap((value) => {
+        if (!value || typeof value !== "object") return [];
+        const item = value as Record<string, unknown>;
+        const model = String(item.model || item.id || "").trim();
+        if (!model || seen.has(model)) return [];
+        seen.add(model);
+        const supported = Array.isArray(item.supportedReasoningEfforts)
+            ? item.supportedReasoningEfforts.flatMap((entry) => {
+                if (!entry || typeof entry !== "object") return [];
+                const effort = reasoningEffortValue((entry as Record<string, unknown>).reasoningEffort);
+                return effort ? [{ reasoningEffort: effort, description: String((entry as Record<string, unknown>).description || "") || undefined }] : [];
+            })
+            : [];
+        return [{
+            id: String(item.id || model),
+            model,
+            displayName: String(item.displayName || item.display_name || model),
+            defaultReasoningEffort: reasoningEffortValue(item.defaultReasoningEffort || item.default_reasoning_effort),
+            supportedReasoningEfforts: supported,
+            isDefault: item.isDefault === true || item.is_default === true,
+        } satisfies AgentModel];
+    });
+}
+
+function reasoningEffortValue(value: unknown): AgentReasoningEffort | undefined {
+    return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max" || value === "ultra" ? value : undefined;
 }
 
 function formatLogText(logs: AgentEventLog[], context: AgentLogContext) {
