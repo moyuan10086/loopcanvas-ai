@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchChannelModels } from "@/services/api/image";
 import type { ModelChannel } from "@/stores/use-config-store";
 
-// 选择渠道模型弹窗：拉取上游模型列表或手动增加，勾选后才会进入渠道模型列表。
+// 维护渠道的完整模型库；是否出现在业务模型下拉框，由“模型”页单独控制。
 export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onClose }: { open: boolean; channel: ModelChannel | null; selectedNames: string[]; onConfirm: (names: string[]) => void; onClose: () => void }) {
     const { message } = App.useApp();
     const [existing, setExisting] = useState<string[]>([]);
@@ -90,7 +90,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
             onCancel={onClose}
             title={
                 <span>
-                    选择渠道模型 <span className="ml-2 text-xs font-normal text-stone-500">已选择 {selected.size} / {new Set([...existing, ...fetched]).size}</span>
+                    维护渠道模型库 <span className="ml-2 text-xs font-normal text-stone-500">模型库 {selected.size} / {new Set([...existing, ...fetched]).size}</span>
                 </span>
             }
             styles={{ body: { maxHeight: "62vh", overflowY: "auto" } }}
@@ -111,7 +111,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
                     拉取模型列表
                 </Button>
             </div>
-            <div className="mt-2 text-xs text-stone-500">如果上游不提供 OpenAI /models 模型列表接口，请在这里手动增加模型名称。</div>
+            <div className="mt-2 text-xs text-stone-500">这里只维护渠道返回的完整模型库；保存渠道后，请到“模型”页勾选要启用的模型。如果上游不提供 OpenAI /models，可手动增加模型名称。</div>
 
             <Tabs
                 className="mt-3"

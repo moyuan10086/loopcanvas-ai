@@ -1,10 +1,12 @@
 import axios from "axios";
 
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { trackApiUsage } from "@/services/api-usage";
+import { backendConnection } from "@/services/config-sync";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 
@@ -73,6 +75,10 @@ type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
+type FalImageResponse = {
+    images?: Array<{ url?: string }>;
+    detail?: string | Array<{ msg?: string }>;
+};
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
@@ -91,7 +97,9 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; usageOperation?: string; onTask?: (task: { taskId: string; workflowId?: string; useWallet?: boolean }) => void };
+export type ImageAngleEditParams = { rotation: number; tilt: number; zoom: number; wideAngle: boolean };
+export type ImageSuperResolutionParams = { targetLongEdge: number; width: number; height: number; useWallet?: boolean };
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -112,6 +120,8 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+const IMAGE_EDIT_TIMEOUT_MS = 180000;
+const IMAGE_EDIT_PROXY_TIMEOUT_MS = 310000;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
@@ -257,11 +267,175 @@ function parseImagePayload(payload: ImageApiResponse) {
     return images;
 }
 
+function falModelUrl(config: Pick<AiConfig, "baseUrl" | "model">) {
+    const baseUrl = config.baseUrl.trim().replace(/\/+$/, "");
+    const model = config.model.trim().replace(/^\/+/, "");
+    return baseUrl.endsWith(`/${model}`) ? baseUrl : `${baseUrl}/${model}`;
+}
+
+async function requestFalEdit(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const imageUrls = await Promise.all(references.map(async (image) => imageToDataUrl(image)));
+    const response = await axios.post<FalImageResponse>(
+        falModelUrl(config),
+        {
+            prompt: withSystemPrompt(config, prompt),
+            image_urls: imageUrls,
+            num_images: Math.min(4, count),
+            output_format: IMAGE_OUTPUT_FORMAT,
+            sync_mode: true,
+            acceleration: "regular",
+        },
+        { headers: { Authorization: `Key ${config.apiKey}`, "Content-Type": "application/json" }, signal: options?.signal },
+    );
+    const images = (response.data.images || []).flatMap((image) => (image.url ? [{ id: nanoid(), dataUrl: image.url }] : []));
+    if (!images.length) throw new Error("Fal 接口没有返回图片");
+    return images;
+}
+
+async function requestApimartImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, edit: boolean, options?: RequestOptions) {
+    const apiConfig = { ...config, baseUrl: config.baseUrl.replace(/^(https?:\/\/)(?:www[.])?apimart[.]ai(?=\/|$)/i, "$1api.apimart.ai") };
+    const imageUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const gptImage2 = isApimartGptImage(apiConfig);
+    const response = await axios.post<unknown>(
+        aiApiUrl(apiConfig, gptImage2 ? "/images/generations" : edit ? "/images/edits" : "/images/generations"),
+        {
+            model: config.model,
+            prompt: withSystemPrompt(config, prompt),
+            n: count,
+            ...(gptImage2
+                ? {
+                      ...(apimartAspectRatio(config.size) ? { size: apimartAspectRatio(config.size) } : {}),
+                      ...(apimartResolution(config.quality) ? { resolution: apimartResolution(config.quality) } : {}),
+                  }
+                : apimartAspectRatio(config.size) ? { aspect_ratio: apimartAspectRatio(config.size) } : {}),
+            ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+        },
+        { headers: aiHeaders(apiConfig, "application/json"), signal: options?.signal },
+    );
+    const direct = apimartImageUrls(response.data);
+    if (direct.length) return direct.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+
+    const taskId = apimartTaskId(response.data);
+    if (!taskId) throw new Error(responseErrorMessage(response.data) || "APIMart 没有返回图片或任务 ID");
+    for (let poll = 0; poll < 60; poll += 1) {
+        await imagePollDelay(5000, options?.signal);
+        const taskResponse = await axios.get<unknown>(aiApiUrl(apiConfig, `/tasks/${encodeURIComponent(taskId)}`), {
+            headers: aiHeaders(apiConfig),
+            params: { language: "zh" },
+            signal: options?.signal,
+        });
+        const task = isRecord(taskResponse.data) && isRecord(taskResponse.data.data) ? taskResponse.data.data : taskResponse.data;
+        const status = isRecord(task) ? stringValue(task.status).toLowerCase() : "";
+        if (["completed", "succeed", "succeeded", "success"].includes(status)) {
+            const urls = apimartImageUrls(taskResponse.data);
+            if (!urls.length) throw new Error("APIMart 任务已完成，但没有返回图片");
+            return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+        }
+        if (["failed", "cancelled", "canceled", "error"].includes(status)) {
+            throw new Error(responseErrorMessage(task) || `APIMart 任务${status}`);
+        }
+    }
+    throw new Error("APIMart 图片任务等待超时");
+}
+
+async function resolveToApisImageTask(config: AiConfig, initial: unknown, options?: RequestOptions) {
+    const direct = apimartImageUrls(initial);
+    if (direct.length) return direct.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    const taskId = toApisImageTaskId(initial);
+    if (!taskId) throw new Error(responseErrorMessage(initial) || "ToAPIs 没有返回图片或任务 ID");
+    for (let poll = 0; poll < 60; poll += 1) {
+        await imagePollDelay(5000, options?.signal);
+        const response = await axios.get<unknown>(aiApiUrl(config, `/images/generations/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal });
+        const urls = apimartImageUrls(response.data);
+        if (urls.length) return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+        const status = toApisImageStatus(response.data);
+        if (["failed", "cancelled", "canceled", "error"].includes(status)) throw new Error(responseErrorMessage(response.data) || `ToAPIs 图片任务${status}`);
+        if (["completed", "succeed", "succeeded", "success"].includes(status)) throw new Error("ToAPIs 图片任务已完成，但没有返回图片");
+    }
+    throw new Error("ToAPIs 图片任务等待超时");
+}
+
+function toApisImageTaskId(value: unknown): string {
+    if (!isRecord(value)) return "";
+    const id = value.id || value.task_id;
+    if (typeof id === "string" || typeof id === "number") return String(id);
+    return toApisImageTaskId(value.data);
+}
+
+function toApisImageStatus(value: unknown): string {
+    if (!isRecord(value)) return "";
+    const status = stringValue(value.status).toLowerCase();
+    return status || toApisImageStatus(value.data);
+}
+
+function apimartTaskId(value: unknown): string {
+    if (!isRecord(value)) return "";
+    const direct = value.task_id || value.id;
+    if (typeof direct === "string" || typeof direct === "number") return String(direct);
+    if (Array.isArray(value.data)) return value.data.map(apimartTaskId).find(Boolean) || "";
+    return apimartTaskId(value.data);
+}
+
+function apimartImageUrls(value: unknown): string[] {
+    if (typeof value === "string") {
+        const text = value.trim();
+        if (/^(?:https?:|data:image\/)/i.test(text)) return [text];
+        try {
+            return apimartImageUrls(JSON.parse(text));
+        } catch {
+            return Array.from(text.matchAll(/https?:\/\/[^\s"'<>]+/gi), (match) => match[0]);
+        }
+    }
+    if (Array.isArray(value)) return value.flatMap(apimartImageUrls);
+    if (!isRecord(value)) return [];
+    const direct = resolveImageDataUrl(value);
+    if (direct) return [direct];
+    return [value.url, value.result, value.result_url, value.images, value.data, value.output, value.response, value.task_result].flatMap(apimartImageUrls);
+}
+
+function apimartAspectRatio(size: string) {
+    const value = size.trim();
+    if (!value || value.toLowerCase() === "auto") return "";
+    const dimensions = parseImageDimensions(value);
+    if (!dimensions) return value.includes(":") ? value : "";
+    const divisor = greatestCommonDivisor(dimensions.width, dimensions.height);
+    return `${dimensions.width / divisor}:${dimensions.height / divisor}`;
+}
+
+function apimartResolution(quality: string) {
+    const value = quality.trim().toLowerCase();
+    if (["4k", "high"].includes(value)) return "4k";
+    if (["2k", "medium", "hd"].includes(value)) return "2k";
+    if (["1k", "low", "standard"].includes(value)) return "1k";
+    return "";
+}
+
+function greatestCommonDivisor(a: number, b: number): number {
+    return b ? greatestCommonDivisor(b, a % b) : a;
+}
+
+function imagePollDelay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+    });
+}
+
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<unknown>(error)) {
+        if (error.code === "ECONNABORTED") return "图片请求等待超时；渠道后台可能仍在生成并计费，请先查消费记录，不要立即重复提交";
+        if (!error.response) {
+            const code = error.code && error.code !== "ERR_NETWORK" ? `（${error.code}）` : "";
+            return `${fallback}：请求过程中网络连接被中断${code}。渠道后台可能仍在生成并计费，请先查消费记录，不要立即重复提交`;
+        }
         const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || readStatusError(error.response?.status, fallback);
+        if (typeof responseData === "string" && responseData.trim()) return responseData.trim().slice(0, 300);
+        return responseErrorMessage(responseData) || readStatusError(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     return error instanceof Error ? error.message : fallback;
@@ -287,6 +461,46 @@ function aiHeaders(config: AiConfig, contentType?: string) {
         Authorization: `Bearer ${config.apiKey}`,
         ...(contentType ? { "Content-Type": contentType } : {}),
     };
+}
+
+async function requestOpenAiImageEdit(
+    config: AiConfig,
+    selectedModel: string,
+    requestConfig: AiConfig,
+    formData: FormData,
+    options?: RequestOptions,
+) {
+    const directRequest = () =>
+        axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, {
+            headers: aiHeaders(requestConfig),
+            signal: options?.signal,
+            timeout: IMAGE_EDIT_TIMEOUT_MS,
+        });
+    const connection = backendConnection();
+    if (!connection) return directRequest();
+    if (!(await supportsImageEditProxy(connection, options?.signal))) return directRequest();
+
+    const channel = resolveModelChannel(config, selectedModel);
+    return axios.post<ImageApiResponse>(`${connection.url}/api/channel-proxy/images/edits`, formData, {
+        headers: { "x-canvas-agent-token": connection.token },
+        params: { channelId: channel.id },
+        signal: options?.signal,
+        timeout: IMAGE_EDIT_PROXY_TIMEOUT_MS,
+    });
+}
+
+async function supportsImageEditProxy(connection: NonNullable<ReturnType<typeof backendConnection>>, signal?: AbortSignal) {
+    try {
+        const response = await axios.get<{ ok?: boolean; imagesEdits?: boolean }>(`${connection.url}/api/channel-proxy/capabilities`, {
+            headers: { "x-canvas-agent-token": connection.token },
+            signal,
+            timeout: 1500,
+        });
+        return response.data?.ok === true && response.data.imagesEdits === true;
+    } catch (error) {
+        if (signal?.aborted || axios.isCancel(error)) throw error;
+        return false;
+    }
 }
 
 function geminiBaseUrl(config: Pick<AiConfig, "baseUrl">) {
@@ -368,7 +582,9 @@ function responseErrorMessage(value: unknown) {
     const error = isRecord(value.error) ? value.error : undefined;
     const response = isRecord(value.response) ? value.response : undefined;
     const responseError = response && isRecord(response.error) ? response.error : undefined;
-    return stringValue(value.msg) || stringValue(error?.message) || stringValue(responseError?.message);
+    const message = stringValue(value.msg) || stringValue(value.message) || stringValue(value.error) || stringValue(error?.message) || stringValue(responseError?.message);
+    const code = stringValue(error?.code) || stringValue(responseError?.code);
+    return message && code ? `${message}（${code}）` : message;
 }
 
 function stringValue(value: unknown) {
@@ -659,8 +875,19 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+export function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+    const model = config.model || config.imageModel;
+    return trackApiUsage(
+        { config, model, kind: "image", operation: options?.usageOperation || "图片生成", endpoint: imageUsageEndpoint(config, model, "/images/generations"), input: `${prompt.length} 字` },
+        () => requestGenerationRequest(config, prompt, options),
+        (images) => `${images.length} 张图片`,
+    );
+}
+
+async function requestGenerationRequest(config: AiConfig, prompt: string, options?: RequestOptions) {
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
+    const runningHubParams = runningHubKeyParams(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
@@ -674,7 +901,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, count: n, ...runningHubParams, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -689,6 +916,14 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (requestConfig.apiFormat === "fal") throw new Error("Fal 的 Qwen 视角编辑模型需要一张参考图片");
+    if (isApimartGrokImage(requestConfig) || isApimartGptImage(requestConfig)) {
+        try {
+            return await requestApimartImages(requestConfig, prompt, [], n, false, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "APIMart 图片生成失败"));
+        }
+    }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
     const background = normalizeBackground(config.background);
@@ -700,16 +935,16 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 prompt: withSystemPrompt(requestConfig, prompt),
                 n,
                 ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
+                ...(requestSize && !isToApisImage(requestConfig) ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
-                response_format: "b64_json",
-                output_format: IMAGE_OUTPUT_FORMAT,
+                ...(!isToApisImage(requestConfig) ? { response_format: "b64_json", output_format: IMAGE_OUTPUT_FORMAT } : {}),
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
                 signal: options?.signal,
             },
         );
+        if (isToApisImage(requestConfig)) return await resolveToApisImageTask(requestConfig, response.data, options);
         const images = parseImagePayload(response.data);
         return images;
     } catch (error) {
@@ -717,10 +952,29 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+export function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+    const model = config.model || config.imageModel;
+    return trackApiUsage(
+        {
+            config,
+            model,
+            kind: "image",
+            operation: options?.usageOperation || (mask ? "局部编辑" : "图片编辑"),
+            endpoint: imageUsageEndpoint(config, model, "/images/edits"),
+            input: `${prompt.length} 字 · ${references.length} 张参考图${mask ? " · 1 个蒙版" : ""}`,
+        },
+        () => requestEditRequest(config, prompt, references, mask, options),
+        (images) => `${images.length} 张图片`,
+    );
+}
+
+async function requestEditRequest(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+    const selectedModel = config.model || config.imageModel;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
+    const runningHubParams = runningHubKeyParams(config, selectedModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const requestPrompt = buildImageReferencePromptText(prompt, references);
+    const qwenImageEdit = isQwenImageEditModel(requestConfig.model);
+    const requestPrompt = qwenImageEdit && references.length === 1 ? prompt.trim() : buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
@@ -734,12 +988,27 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, count: n, ...runningHubParams, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (requestConfig.apiFormat === "fal") {
+        if (mask) throw new Error("Fal Qwen 视角编辑暂不支持蒙版");
+        try {
+            return await requestFalEdit(requestConfig, prompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "Fal 图片编辑失败"));
+        }
+    }
+    if (isApimartGrokImage(requestConfig) || isApimartGptImage(requestConfig)) {
+        try {
+            return await requestApimartImages(requestConfig, requestPrompt, references, n, true, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "APIMart 图片编辑失败"));
         }
     }
     if (requestConfig.apiFormat === "gemini") {
@@ -756,9 +1025,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-    formData.set("n", String(n));
-    formData.set("response_format", "b64_json");
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    if (!isToApisFluxImage(requestConfig)) formData.set("n", String(n));
+    if (!isToApisImage(requestConfig)) formData.set("response_format", "b64_json");
+    if (!qwenImageEdit && !isToApisImage(requestConfig)) formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     if (quality) {
         formData.set("quality", quality);
     }
@@ -773,7 +1042,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
+        const response = await requestOpenAiImageEdit(config, selectedModel, requestConfig, formData, options);
+        if (isToApisImage(requestConfig)) return await resolveToApisImageTask(requestConfig, response.data, options);
         const images = parseImagePayload(response.data);
         return images;
     } catch (error) {
@@ -781,7 +1051,109 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
-export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+export function requestAngleEdit(config: AiConfig, reference: ReferenceImage, params: ImageAngleEditParams, options?: RequestOptions) {
+    return requestEdit({ ...config, count: "1", size: "auto", quality: "auto" }, buildQwenAngleEditPrompt(params), [reference], undefined, { ...options, usageOperation: "视角调整" });
+}
+
+export function requestImageSuperResolution(config: AiConfig, reference: ReferenceImage, params: ImageSuperResolutionParams, options?: RequestOptions) {
+    const model = config.model || config.imageModel;
+    return trackApiUsage(
+        { config, model, kind: "image", operation: options?.usageOperation || "AI 超分", endpoint: "/task/openapi/create", input: `1 张参考图 · ${params.targetLongEdge}px` },
+        async () => {
+            const requestConfig = resolveModelRequestConfig(config, model);
+            const script = resolveModelScript(config, model);
+            if (!script) throw new Error("所选模型没有可执行的 RunningHub 工作流");
+            try {
+                const result = await runModelPlugin({
+                    capability: "image",
+                    script,
+                    config: requestConfig,
+                    prompt: "",
+                    images: [await imageToDataUrl(reference)],
+                    params: { size: `${params.width}x${params.height}`, targetLongEdge: params.targetLongEdge, quality: "high", count: 1, useWallet: Boolean(params.useWallet), walletApiKey: requestConfig.walletApiKey },
+                    signal: options?.signal,
+                    onTask: options?.onTask,
+                });
+                return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            } catch (error) {
+                throw new Error(readAxiosError(error, "AI 超分失败"));
+            }
+        },
+        (images) => `${images.length} 张图片`,
+    );
+}
+
+function runningHubKeyParams(config: AiConfig, model: string) {
+    const channel = resolveModelChannel(config, model);
+    const walletApiKey = channel.walletApiKey?.trim() || "";
+    const useWallet = channel.runningHubKeyMode === "wallet" || (channel.runningHubKeyMode !== "rh" && !channel.apiKey.trim() && Boolean(walletApiKey));
+    return { useWallet, walletApiKey };
+}
+
+export function buildQwenAngleEditPrompt(params: ImageAngleEditParams) {
+    const rotation = clampNumber(params.rotation, -180, 180);
+    const tilt = clampNumber(params.tilt, -45, 45);
+    const moveForward = Math.round(clampNumber(params.zoom, 0, 10) * 10) / 10;
+    const view = horizontalAnglePrompt(rotation);
+    const vertical = verticalAnglePrompt(tilt);
+    const orbit = Math.abs(rotation) < 10 ? "Keep the camera in front of the scene." : `Orbit the camera to the ${rotation > 0 ? "right" : "left"} around the center of the entire scene until it reaches the requested ${view.name}.`;
+    const distance = cameraDistancePrompt(moveForward);
+    const lens = params.wideAngle ? "Use a natural wide-angle lens without fisheye distortion." : "Use a natural standard lens.";
+    return `Re-render the entire input as a coherent 3D scene from a clearly different ${view.name}, ${vertical}. ${orbit} Rotate the camera around the whole scene, not only the person or foreground object. Viewpoint requirement: ${view.requirement} ${distance} ${lens} Keep the original aspect ratio and full composition. Preserve subject identity, body proportions, pose, clothing, colors, materials, props, lighting, and visual style as closely as geometrically possible. Infer and reconstruct newly visible surfaces and occluded background areas consistently. Do not crop, pan, mirror, rotate the original 2D pixels, apply a perspective warp, or return the original viewpoint.`;
+}
+
+function verticalAnglePrompt(tilt: number) {
+    const angle = Math.abs(tilt);
+    if (angle < 8) return "eye-level view";
+    if (angle < 25) return tilt > 0 ? "moderately elevated view from above" : "moderately low-angle view from below";
+    return tilt > 0 ? "strong high-angle view from above" : "strong low-angle view from below";
+}
+
+function cameraDistancePrompt(moveForward: number) {
+    if (moveForward < 2) return "Keep the original camera distance, framing, and subject scale.";
+    if (moveForward < 7) return "Use a moderately closer camera while keeping every main subject fully visible.";
+    return "Use a close camera position without cropping any main subject or important scene element.";
+}
+
+function horizontalAnglePrompt(rotation: number) {
+    const angle = Math.abs(rotation);
+    const side = rotation > 0 ? "right" : "left";
+    if (angle < 10) return { name: "front view", requirement: "Show the front-facing surfaces as in the source, without changing the composition." };
+    if (angle < 75) return { name: `${side} front three-quarter view`, requirement: `Show both the front and ${side} sides of subjects and scene objects with clear three-dimensional parallax.` };
+    if (angle <= 105) return { name: `${side} side profile view`, requirement: `The camera is located at the ${side} side; show side surfaces and strong side-on spatial parallax rather than a frontal image.` };
+    if (angle < 170) return { name: `${side} rear three-quarter view`, requirement: `The camera is behind the scene on its ${side} side. Back and ${side} surfaces must dominate; front-facing faces, chests, and object fronts must not remain fully visible.` };
+    return { name: "direct back view", requirement: "The camera is directly behind the scene. Show the backs of subjects and objects; front-facing faces and front surfaces must not be visible." };
+}
+
+export function qwenAngleViewLabel(rotation: number) {
+    const normalized = clampNumber(rotation, -180, 180);
+    const angle = Math.abs(normalized);
+    const side = normalized > 0 ? "右" : "左";
+    if (angle < 10) return "正面视角";
+    if (angle < 75) return `${side}前侧 3/4 视角`;
+    if (angle <= 105) return `${side}侧面视角`;
+    if (angle < 170) return `${side}后侧 3/4 视角`;
+    return "背面视角";
+}
+
+function isQwenImageEditModel(model: string) {
+    return /(?:^|\/)qwen-image-edit-(?:max(?:-|$)|plus(?:-|$)|2511(?:-|$))/i.test(model);
+}
+
+function clampNumber(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, Number.isFinite(value) ? value : 0));
+}
+
+export function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+    const model = config.model || config.textModel;
+    return trackApiUsage(
+        { config, model, kind: "text", operation: options?.usageOperation || "文本与视觉问答", endpoint: imageUsageEndpoint(config, model, "/responses"), input: textMessageInputSummary(messages) },
+        () => requestImageQuestionRequest(config, messages, onDelta, options),
+        (answer) => `${answer.length} 字`,
+    );
+}
+
+async function requestImageQuestionRequest(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {
@@ -818,8 +1190,48 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
+function imageUsageEndpoint(config: AiConfig, model: string, openAiPath: string) {
+    const channel = resolveModelChannel(config, model);
+    if (channel.apiFormat === "fal") return `/${modelOptionName(model)}`;
+    if (channel.apiFormat === "gemini") return `/models/${modelOptionName(model)}:generateContent`;
+    return openAiPath;
+}
+
+function isApimartGrokImage(config: Pick<AiConfig, "baseUrl" | "model">) {
+    return /(?:^|[.])apimart[.]ai/i.test(config.baseUrl) && /^grok-imagine-1[.][05](?:-edit)?-apimart$/i.test(config.model);
+}
+
+function isApimartGptImage(config: Pick<AiConfig, "baseUrl" | "model">) {
+    return /(?:^|[.])apimart[.]ai/i.test(config.baseUrl) && /^gpt-image-2(?:-ext)?$/i.test(config.model);
+}
+
+function isToApisFluxImage(config: Pick<AiConfig, "baseUrl" | "model">) {
+    return /(?:^|[.])toapis[.]com/i.test(config.baseUrl) && /^flux-/i.test(config.model);
+}
+
+function isToApisImage(config: Pick<AiConfig, "baseUrl" | "model">) {
+    return /(?:^|[.])toapis[.]com/i.test(config.baseUrl) && /^(?:gpt-image-2|flux-)/i.test(config.model);
+}
+
+function textMessageInputSummary(messages: AiTextMessage[]) {
+    let characters = 0;
+    let images = 0;
+    messages.forEach((message) => {
+        if (typeof message.content === "string") {
+            characters += message.content.length;
+            return;
+        }
+        message.content.forEach((item) => {
+            if (item.type === "text") characters += item.text.length;
+            else images += 1;
+        });
+    });
+    return `${characters} 字${images ? ` · ${images} 张图片` : ""}`;
+}
+
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
     try {
+        if (config.apiFormat === "fal") return ["fal-ai/qwen-image-edit-2511"];
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);

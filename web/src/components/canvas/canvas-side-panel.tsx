@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Empty, Input, Select, Tag } from "antd";
-import { ChevronRight, FileText, Image as ImageIcon, Music2, Search, Settings2, Square, Type, Video } from "lucide-react";
+import { Empty, Input, Select, Tag, Tooltip } from "antd";
+import { ChevronRight, FileText, Image as ImageIcon, Music2, PanelLeftClose, PanelLeftOpen, Repeat2, Search, Settings2, Square, Type, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
@@ -27,6 +27,7 @@ const NODE_TYPE_ICON: Record<string, typeof Square> = {
     [CanvasNodeType.Text]: Type,
     [CanvasNodeType.Config]: Settings2,
     [CanvasNodeType.Group]: Square,
+    [CanvasNodeType.Loop]: Repeat2,
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -36,19 +37,62 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
+const SIDE_PANEL_COLLAPSED_KEY = "infinite-canvas:canvas-side-panel-collapsed:v1";
+
 export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onInsertAsset }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
+    const [collapsed, setCollapsed] = useState(() => readSidePanelCollapsed());
+
+    const setPanelCollapsed = (value: boolean) => {
+        setCollapsed(value);
+        try {
+            window.localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, value ? "1" : "0");
+        } catch {
+            // Local storage may be unavailable in restricted browser contexts.
+        }
+    };
+
+    if (collapsed) {
+        return (
+            <div className="relative h-full w-0 shrink-0" data-canvas-no-zoom>
+                <Tooltip title="展开左侧栏" placement="right">
+                    <button
+                        type="button"
+                        aria-label="展开左侧栏"
+                        onClick={() => setPanelCollapsed(false)}
+                        className="absolute left-3 top-20 z-50 grid size-9 place-items-center rounded-xl border shadow-lg backdrop-blur transition hover:scale-105"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    >
+                        <PanelLeftOpen className="size-4.5" />
+                    </button>
+                </Tooltip>
+            </div>
+        );
+    }
 
     return (
-        <aside className="flex h-full w-[280px] shrink-0 flex-col overflow-hidden border-r" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} data-canvas-no-zoom>
+        <aside className="relative flex h-full w-[280px] shrink-0 flex-col overflow-hidden border-r" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} data-canvas-no-zoom>
             <div className="flex items-center gap-1 px-3 pt-3">
                 <TabButton label="画布" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
                 <TabButton label="资产" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
+                <Tooltip title="收起左侧栏">
+                    <button type="button" aria-label="收起左侧栏" onClick={() => setPanelCollapsed(true)} className="ml-auto grid size-8 place-items-center rounded-lg opacity-55 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/5">
+                        <PanelLeftClose className="size-4" />
+                    </button>
+                </Tooltip>
             </div>
             <div className="mt-2 min-h-0 flex-1 overflow-hidden">{tab === "canvas" ? <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} theme={theme} /> : <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />}</div>
         </aside>
     );
+}
+
+function readSidePanelCollapsed() {
+    try {
+        return window.localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === "1";
+    } catch {
+        return false;
+    }
 }
 
 function TabButton({ label, active, theme, onClick }: { label: string; active: boolean; theme: CanvasTheme; onClick: () => void }) {
@@ -71,6 +115,7 @@ const NODE_FILTER_OPTIONS = [
     { label: "音频", value: CanvasNodeType.Audio },
     { label: "配置", value: CanvasNodeType.Config },
     { label: "分组", value: CanvasNodeType.Group },
+    { label: "循环", value: CanvasNodeType.Loop },
 ];
 
 function nodePreviewText(node: CanvasNodeData) {

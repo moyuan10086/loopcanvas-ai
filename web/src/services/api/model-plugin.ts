@@ -28,6 +28,7 @@ export type RunPluginArgs = {
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
+    onTask?: (task: { taskId: string; workflowId?: string; useWallet?: boolean }) => void;
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {
@@ -130,6 +131,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
         "sleep",
         "signal",
         "onDelta",
+        "onTask",
         `"use strict"; return (async () => {\n${args.script}\n})();`,
     ) as (...fnArgs: unknown[]) => Promise<T>;
     try {
@@ -148,6 +150,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             (ms: number) => sleep(ms, args.signal),
             args.signal,
             args.onDelta,
+            args.onTask,
         );
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -175,6 +178,7 @@ export const PLUGIN_VARIABLES: PluginVariable[] = [
     { name: "sleep", type: "function", desc: "sleep(ms) 延时" },
     { name: "signal", type: "AbortSignal", desc: "取消信号，可透传给 http/request" },
     { name: "onDelta", type: "function", desc: "onDelta(text) 推送流式文本（文本模型）", capabilities: ["text"] },
+    { name: "onTask", type: "function", desc: "onTask({taskId}) 在异步任务创建后保存任务 ID，便于刷新后恢复轮询" },
 ];
 
 export const PLUGIN_RETURNS: Record<ModelCapability, string> = {

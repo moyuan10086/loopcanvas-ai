@@ -20,7 +20,7 @@ npx -y @basketikun/canvas-agent
 3. 在 Codex 右侧浏览器打开：
 
 ```text
-https://canvas.best/canvas?mode=new&agentUrl=<Local URL>&agentToken=<Connect token>
+https://canvas.best/canvas?mode=recent&agentUrl=<Local URL>&agentToken=<Connect token>
 ```
 
 ## 本地版
@@ -42,7 +42,7 @@ npx -y @basketikun/canvas-agent
 3. 从启动输出取得 `Local URL` 和 `Connect token`，在 Codex 右侧浏览器打开：
 
 ```text
-<Vite Local 地址>/canvas?mode=new&agentUrl=<Local URL>&agentToken=<Connect token>
+<Vite Local 地址>/canvas?mode=recent&agentUrl=<Local URL>&agentToken=<Connect token>
 ```
 
 ## MCP 与连接地址
@@ -52,7 +52,7 @@ npx -y @basketikun/canvas-agent
 
 ## 打开模式
 
-用户没有明确指定打开方式时，始终使用 `mode=new` 新建画布。只有用户明确要求时才替换为：
+用户没有明确指定打开方式时，始终使用 `mode=recent` 打开最近使用的画布；没有任何画布时才自动新建。只有用户明确要求时才替换为：
 
-- 最近画布：`mode=recent`
+- 新建画布：`mode=new`
 - 自己选择：`mode=choose`

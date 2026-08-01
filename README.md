@@ -4,6 +4,9 @@
 
 <h1 align="center">无限画布 (infinite-canvas)</h1>
 
+> [!IMPORTANT]
+> 这是 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 的个人二次开发分支，当前自定义版本为 `v0.8.2-moyuan.1`，基于上游 `v0.8.2`（`0c4288b`）。本分支重点增强多模型渠道、人民币价格管理、循环与电商卖点图工作流、RunningHub/ComfyUI/ModelScope、后端持久化和任务可靠性。原作者、项目来源及 AGPL-3.0 协议均予以保留，详细差异见 [FORK_NOTES.md](FORK_NOTES.md)，项目与简历记录见 [docs/PROJECT_RECORD.md](docs/PROJECT_RECORD.md)。
+
 <p align="center">
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
   <a href="https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
@@ -45,6 +48,8 @@
 ## 快速开始
 
 AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
+
+本二次开发分支在连接本地 Canvas Agent 后，会把画布、节点媒体、渠道配置和 API 调用统计同步保存到 `~/.infinite-canvas/`，浏览器存储作为离线缓存。Windows 用户克隆后可双击 `start-infinite-canvas.cmd` 一键安装缺失依赖、构建并启动 Web 与 Agent；脚本会保留已经打开的浏览器画布，不会重复创建新画布。
 
 ### 本地开发
 

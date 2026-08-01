@@ -17,6 +17,7 @@ export default function PromptsPage() {
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
+    const updateAsset = useAssetStore((state) => state.updateAsset);
     const copyText = useCopyText();
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
@@ -32,8 +33,15 @@ export default function PromptsPage() {
     };
 
     const savePromptAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success("已加入我的资产");
+        const asset = { kind: "text" as const, title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, note: item.note, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } };
+        const existing = useAssetStore.getState().assets.find((saved) => saved.metadata?.source === "prompt-library" && saved.metadata?.promptId === item.id);
+        if (existing) {
+            updateAsset(existing.id, asset);
+            message.success("素材已更新");
+            return;
+        }
+        addAsset(asset);
+        message.success("已加入我的素材");
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {

@@ -15,6 +15,7 @@ export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },
     { value: "1080p", label: "1080p" },
+    { value: "4k", label: "4K" },
 ] as const;
 
 export const seedanceRatioOptions = [
@@ -28,6 +29,7 @@ export const seedanceRatioOptions = [
 ] as const;
 
 export const seedanceDurationOptions = [-1, 4, 5, 6, 8, 10, 12, 15] as const;
+export const seedanceMiniDurationOptions = [4, 8, 10, 12, 15] as const;
 
 const seedancePixels = {
     "480p": {
@@ -54,6 +56,14 @@ const seedancePixels = {
         "9:16": "1080x1920",
         "21:9": "2206x946",
     },
+    "4k": {
+        "16:9": "3840x2160",
+        "4:3": "3328x2496",
+        "1:1": "2880x2880",
+        "3:4": "2496x3328",
+        "9:16": "2160x3840",
+        "21:9": "4412x1892",
+    },
 } as const;
 
 export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl">) {
@@ -71,25 +81,45 @@ export function isSeedanceFastModel(model: string) {
     return isSeedanceVideoModel(value) && value.includes("fast");
 }
 
+export function isSeedanceMiniModel(model: string) {
+    const value = model.toLowerCase();
+    return isSeedanceVideoModel(value) && value.includes("mini");
+}
+
 export function isArkPlanBaseUrl(baseUrl: string) {
     return baseUrl.toLowerCase().includes("ark.cn-beijing.volces.com/api/plan/v3") || baseUrl.toLowerCase().includes("/api/plan/v3");
 }
 
+export function isToApisBaseUrl(baseUrl: string) {
+    try {
+        const hostname = new URL(baseUrl).hostname.toLowerCase();
+        return hostname === "toapis.com" || hostname.endsWith(".toapis.com");
+    } catch {
+        return false;
+    }
+}
+
 export function normalizeSeedanceResolution(value: string, model = "") {
     const normalized = normalizeResolutionToken(value);
-    if (isSeedanceFastModel(model) && normalized === "1080p") return "720p";
+    if ((isSeedanceFastModel(model) || isSeedanceMiniModel(model)) && (normalized === "1080p" || normalized === "4k")) return "720p";
     return seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
 }
 
 export function normalizeResolutionToken(value: string) {
+    if (String(value).toLowerCase() === "4k") return "4k";
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
     const resolution = String(value || "").replace(/p$/i, "") || "720";
     return `${resolution}p`;
 }
 
-export function normalizeSeedanceDuration(value: string) {
-    if (String(value).trim() === "-1") return -1;
+export function normalizeSeedanceDuration(value: string, model = "") {
+    const token = String(value).trim();
+    if (isSeedanceMiniModel(model)) {
+        const seconds = Math.floor(Number(token) || 4);
+        return seedanceMiniDurationOptions.reduce((closest, option) => (Math.abs(option - seconds) < Math.abs(closest - seconds) ? option : closest), seedanceMiniDurationOptions[0]);
+    }
+    if (token === "-1" || token === "0") return Number(token);
     const seconds = Math.floor(Number(value) || 5);
     return Math.max(4, Math.min(15, seconds));
 }
@@ -134,11 +164,7 @@ export function seedanceReferenceLabel(kind: "image" | "video" | "audio", index:
 }
 
 export function buildSeedancePromptText(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
-    const labels = [
-        ...images.map((_, index) => seedanceReferenceLabel("image", index)),
-        ...videos.map((_, index) => seedanceReferenceLabel("video", index)),
-        ...audios.map((_, index) => seedanceReferenceLabel("audio", index)),
-    ];
+    const labels = [...images.map((_, index) => seedanceReferenceLabel("image", index)), ...videos.map((_, index) => seedanceReferenceLabel("video", index)), ...audios.map((_, index) => seedanceReferenceLabel("audio", index))];
     const text = prompt.trim();
     if (!labels.length) return text;
     return `参考资产编号：${labels.join("、")}。请按这些编号理解提示词中的图片、视频和音频引用。\n\n${text}`;

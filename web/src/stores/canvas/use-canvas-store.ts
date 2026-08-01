@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
+import { initializeCanvasSync, scheduleCanvasBackendSave, subscribeCanvasSync } from "@/services/canvas-sync";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -35,8 +36,26 @@ type CanvasStore = {
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+let pendingLocalWrite: { name: string; value: StorageValue<CanvasStore> } | null = null;
+let localWrite: Promise<void> | null = null;
+
+function persistLatestCanvasState(name: string, value: StorageValue<CanvasStore>): Promise<void> {
+    pendingLocalWrite = { name, value };
+    if (!localWrite) {
+        localWrite = (async () => {
+            while (pendingLocalWrite) {
+                const next = pendingLocalWrite;
+                pendingLocalWrite = null;
+                await localForageStorage.setItem(next.name, JSON.stringify(next.value));
+            }
+        })().finally(() => {
+            localWrite = null;
+            if (pendingLocalWrite) void persistLatestCanvasState(pendingLocalWrite.name, pendingLocalWrite.value);
+        });
+    }
+    return localWrite!;
+}
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
@@ -50,11 +69,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-            saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
-        }, 400);
+        return persistLatestCanvasState(name, value);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
@@ -126,9 +141,22 @@ export const useCanvasStore = create<CanvasStore>()(
                 ({
                     projects: state.projects,
                 }) as StorageValue<CanvasStore>["state"],
-            onRehydrateStorage: () => () => {
-                useCanvasStore.setState({ hydrated: true });
+            onRehydrateStorage: () => (state) => {
+                void initializeCanvasSync(state?.projects || []).then((projects) => {
+                    useCanvasStore.setState({ projects, hydrated: true });
+                });
             },
         },
     ),
 );
+
+subscribeCanvasSync((projects) => {
+    const current = useCanvasStore.getState().projects;
+    if (current.length === projects.length && current.every((project, index) => project === projects[index])) return;
+    useCanvasStore.setState({ projects });
+});
+
+useCanvasStore.subscribe((state, previous) => {
+    if (!state.hydrated || !previous.hydrated || state.projects === previous.projects) return;
+    scheduleCanvasBackendSave(state.projects);
+});

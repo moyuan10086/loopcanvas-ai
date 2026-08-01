@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Video } from "lucide-react";
+import { ArrowRight, ChevronRight, Group, Image as ImageIcon, LoaderCircle, Maximize2, Music2, Pause, Play, Puzzle, RefreshCw, Repeat2, ShoppingBag, Star, Video, Volume2, VolumeX } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -15,6 +15,16 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
 
+function nodeAccentColor(type: CanvasNodeData["type"]) {
+    if (type === CanvasNodeType.Image) return "#30a46c";
+    if (type === CanvasNodeType.Video) return "#8e5ad7";
+    if (type === CanvasNodeType.Audio) return "#e68a00";
+    if (type === CanvasNodeType.Text) return "#2f80ff";
+    if (type === CanvasNodeType.Config) return "#5e5ce6";
+    if (type === CanvasNodeType.Loop) return "#e5484d";
+    return "#8e8e93";
+}
+
 type CanvasNodeProps = {
     data: CanvasNodeData;
     scale: number;
@@ -27,6 +37,7 @@ type CanvasNodeProps = {
     showPanel: boolean;
     showImageInfo: boolean;
     resourceLabel?: CanvasResourceReference;
+    loopInputOrders?: Array<{ loopId: string; loopTitle: string; index: number }>;
     mentionReferences?: CanvasResourceReference[];
     pluginHost?: CanvasPluginHost;
     registryVersion?: number;
@@ -90,6 +101,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     showPanel,
     showImageInfo,
     resourceLabel,
+    loopInputOrders = [],
     mentionReferences = [],
     pluginHost,
     renderPanel,
@@ -117,12 +129,14 @@ export const CanvasNode = React.memo(function CanvasNode({
     onViewImage,
     onContextMenu,
 }: CanvasNodeProps) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const themeName = useThemeStore((state) => state.theme);
+    const theme = canvasThemes[themeName];
     const [hovered, setHovered] = useState(false);
     const definition = getNodeDefinition(data.type);
     const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [pluginHost, data, theme, scale, isSelected]);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [panelSize, setPanelSize] = useState<{ width: number; height: number } | null>(null);
     const [titleDraft, setTitleDraft] = useState(data.title || "");
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
@@ -138,9 +152,19 @@ export const CanvasNode = React.memo(function CanvasNode({
     // 透明背景节点(如 SVG):卡片背景/边框透明,直接融入画布;选中/关联态仍显示描边以便定位
     const transparentBg = Boolean(definition?.transparentBackground);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
-    const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : "transparent";
+    const glassBackground = themeName === "light" ? "rgba(255, 255, 255, 0.75)" : "rgba(29, 29, 31, 0.72)";
+    const glassBorder = themeName === "light" ? "rgba(255, 255, 255, 0.88)" : "rgba(255, 255, 255, 0.12)";
+    const glassShadow = themeName === "light"
+        ? "0 4px 20px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.72)"
+        : "0 4px 20px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08)";
+    const elevatedGlassShadow = themeName === "light"
+        ? "0 10px 32px rgba(15, 23, 42, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.82)"
+        : "0 12px 36px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.10)";
+    const accentColor = nodeAccentColor(data.type);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const panelResizeRef = useRef<{ startX: number; startWidth: number; ratio: number } | null>(null);
     const resizeRef = useRef({
         isResizing: false,
         corner: "bottom-right" as ResizeCorner,
@@ -198,6 +222,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
     }, [isEditingContent]);
 
+
     useEffect(() => {
         if (!editRequestNonce || data.type !== CanvasNodeType.Text) return;
         setIsEditingContent(true);
@@ -224,8 +249,8 @@ export const CanvasNode = React.memo(function CanvasNode({
 
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
-            const minWidth = 220;
-            const minHeight = 160;
+            const minWidth = data.type === CanvasNodeType.Loop ? 420 : 220;
+            const minHeight = data.type === CanvasNodeType.Loop ? 420 : 160;
             const startRight = resizeRef.current.startLeft + resizeRef.current.startWidth;
             const startBottom = resizeRef.current.startTop + resizeRef.current.startHeight;
             const fromLeft = resizeRef.current.corner.includes("left");
@@ -284,12 +309,44 @@ export const CanvasNode = React.memo(function CanvasNode({
         window.addEventListener("mouseup", handleResizeUp);
     };
 
+    const handlePanelResizeMove = useCallback((event: PointerEvent) => {
+        const current = panelResizeRef.current;
+        if (!current) return;
+        const delta = (event.clientX - current.startX) / Math.max(scale, 0.01);
+        const minimumHeight = 320;
+        const minimumWidth = Math.max(320, minimumHeight * current.ratio);
+        const width = Math.max(minimumWidth, Math.min(1200, current.startWidth + delta));
+        setPanelSize({ width, height: width / current.ratio });
+    }, [scale]);
+
+    const handlePanelResizeEnd = useCallback(() => {
+        panelResizeRef.current = null;
+        window.removeEventListener("pointermove", handlePanelResizeMove);
+        window.removeEventListener("pointerup", handlePanelResizeEnd);
+    }, [handlePanelResizeMove]);
+
+    const handlePanelResizeStart = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = panelRef.current?.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
+        panelResizeRef.current = { startX: event.clientX, startWidth: rect.width / Math.max(scale, 0.01), ratio: rect.width / rect.height };
+        window.addEventListener("pointermove", handlePanelResizeMove);
+        window.addEventListener("pointerup", handlePanelResizeEnd);
+    }, [handlePanelResizeEnd, handlePanelResizeMove, scale]);
+
+    useEffect(() => {
+        if (!showPanel) setPanelSize(null);
+    }, [data.id, showPanel]);
+
     useEffect(() => {
         return () => {
             window.removeEventListener("mousemove", handleResizeMove);
             window.removeEventListener("mouseup", handleResizeUp);
+            window.removeEventListener("pointermove", handlePanelResizeMove);
+            window.removeEventListener("pointerup", handlePanelResizeEnd);
         };
-    }, [handleResizeMove, handleResizeUp]);
+    }, [handlePanelResizeEnd, handlePanelResizeMove, handleResizeMove, handleResizeUp]);
 
     return (
         <div
@@ -313,13 +370,14 @@ export const CanvasNode = React.memo(function CanvasNode({
             onMouseDownCapture={(event) => onSelectCapture?.(event, data.id)}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            <div className="absolute left-2 top-[-28px] z-[65] flex h-6 max-w-[calc(100%-16px)] min-w-0 items-center gap-2" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                {!isGroup ? <span className="size-1.5 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(255,255,255,.46)]" style={{ background: accentColor }} /> : null}
                 {isEditingTitle ? (
                     <input
                         ref={titleInputRef}
                         value={titleDraft}
                         maxLength={64}
-                        className="h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
+                        className="h-6 min-w-0 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
                         style={{ borderColor: theme.node.muted, color: theme.node.text }}
                         onChange={(event) => setTitleDraft(event.target.value)}
                         onBlur={finishTitleEditing}
@@ -334,7 +392,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 ) : (
                     <button
                         type="button"
-                        className="block max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
+                        className="block min-w-0 max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-70 transition hover:border-current hover:opacity-100"
                         style={{ color: theme.node.text }}
                         title="双击修改节点名称"
                         onDoubleClick={(event) => {
@@ -348,12 +406,14 @@ export const CanvasNode = React.memo(function CanvasNode({
             </div>
 
             <div
-                className="relative h-full w-full overflow-visible rounded-3xl border-2"
+                className="relative h-full w-full overflow-visible rounded-[16px] border transition-[border-color,box-shadow,background-color] duration-200 ease-out"
                 style={{
-                    background: isGroup ? `${theme.toolbar.panel}66` : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
-                    borderColor: isGroup ? (isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke) : hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : transparentBg ? "transparent" : theme.node.stroke,
+                    background: isGroup ? `${theme.toolbar.panel}66` : transparentBg ? "transparent" : glassBackground,
+                    borderColor: isGroup ? (isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke) : isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : transparentBg ? "transparent" : glassBorder,
                     borderStyle: isGroup ? "dashed" : "solid",
-                    boxShadow: isGroupDropTarget ? `0 0 0 2px ${selectionBlue}66, inset 0 0 0 999px ${selectionBlue}10` : isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
+                    boxShadow: isGroupDropTarget ? `0 0 0 2px ${selectionBlue}66, inset 0 0 0 999px ${selectionBlue}10` : isActive ? `0 0 0 1px ${selectionBlue}55, ${elevatedGlassShadow}` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, ${elevatedGlassShadow}` : transparentBg || isGroup ? undefined : hovered ? elevatedGlassShadow : glassShadow,
+                    backdropFilter: transparentBg || isGroup ? undefined : "blur(20px) saturate(140%)",
+                    WebkitBackdropFilter: transparentBg || isGroup ? undefined : "blur(20px) saturate(140%)",
                 }}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
@@ -380,7 +440,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
-                            background: isGroup ? "transparent" : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
+                            background: "transparent",
                             pointerEvents: contentInteractive ? undefined : "none",
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
@@ -415,28 +475,37 @@ export const CanvasNode = React.memo(function CanvasNode({
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
                 {resourceLabel ? <ResourceLabelBadge reference={resourceLabel} /> : null}
+                {loopInputOrders.length ? <LoopInputOrderBadge orders={loopInputOrders} /> : null}
+                {data.type !== CanvasNodeType.Loop && data.metadata?.generationDurationMs != null ? <GenerationDurationBadge durationMs={data.metadata.generationDurationMs} /> : null}
 
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
-                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="top-left" visible={isSelected} onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="top-right" visible={isSelected} onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-left" visible={isSelected} onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-right" visible={isSelected} onMouseDown={handleResizeMouseDown} />
             </div>
+
+            {data.type === CanvasNodeType.Image && data.metadata?.globalImageId ? <GlobalImageIndexBadge value={data.metadata.globalImageId} /> : null}
 
             {!isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!isGroup ? <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
-            {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[600px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && !isGroup && renderPanel ? (
+                <div ref={panelRef} className="absolute left-1/2 top-full z-[70] overflow-auto pt-4 thin-scrollbar" style={{ width: panelSize?.width || 600, minHeight: 320, height: panelSize?.height || undefined, boxSizing: "border-box", transform: "translateX(-50%)" }}>
+                    {renderPanel(data)}
+                    <button type="button" aria-label="等比例调整面板大小" className="absolute bottom-1 right-1 z-10 size-4 cursor-nwse-resize rounded-sm opacity-40 hover:opacity-80" style={{ background: theme.node.muted }} onPointerDown={handlePanelResizeStart} />
+                </div>
+            ) : null}
         </div>
     );
 });
 
 function NodeContent(props: NodeContentRendererProps) {
-    if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
+    if ((props.node.type === CanvasNodeType.Config || props.node.type === CanvasNodeType.Loop) && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
-    if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
+    if (props.node.metadata?.status === "loading" && props.node.type !== CanvasNodeType.Loop) return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "error" && props.node.type !== CanvasNodeType.Loop) return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
     if (Renderer) return <Renderer {...props} />;
@@ -457,7 +526,32 @@ const nodeContentRenderers = {
     [CanvasNodeType.Video]: VideoNodeContent,
     [CanvasNodeType.Audio]: AudioNodeContent,
     [CanvasNodeType.Group]: GroupNodeContent,
+    [CanvasNodeType.Loop]: LoopNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
+
+function LoopNodeContent({ node, theme }: NodeContentRendererProps) {
+    const count = Math.max(1, Math.min(100, Number(node.metadata?.loopCount) || 1));
+    const sellingPointMode = node.metadata?.loopTaskMode === "selling-points";
+    const mode = node.metadata?.loopMode === "parallel" ? "同时运行" : "按顺序";
+    const status = node.metadata?.status === "loading" ? `运行中 · ${node.metadata?.loopRound || 0}/${count}` : node.metadata?.status === "error" ? "运行失败" : "待运行";
+    return (
+        <div className="flex h-full w-full flex-col gap-3 p-4" style={{ color: theme.node.text }}>
+            <div className="flex items-center gap-2">
+                <span className="grid size-9 place-items-center rounded-lg" style={{ background: theme.toolbar.activeBg, color: theme.node.activeStroke }}>
+                    {sellingPointMode ? <ShoppingBag className="size-5" /> : <Repeat2 className="size-5" />}
+                </span>
+                <div className="min-w-0">
+                    <div className="text-sm font-semibold">{sellingPointMode ? "卖点图循环" : "循环节点"}</div>
+                    <div className="text-[11px] opacity-55">{mode} · {sellingPointMode ? `生成 ${count} 张` : `重复 ${count} 次`}</div>
+                </div>
+                <span className="ml-auto rounded px-2 py-1 text-[10px]" style={{ background: theme.toolbar.activeBg, color: node.metadata?.status === "error" ? "#ef4444" : theme.node.muted }}>{status}</span>
+            </div>
+            <div className="flex flex-1 items-center gap-2 rounded-lg border border-dashed p-3 text-xs leading-5 opacity-65" style={{ borderColor: theme.node.stroke, background: `${theme.node.fill}55` }}>
+                <span>{sellingPointMode ? "商品图" : "附加输入"}</span><ArrowRight className="size-3.5 shrink-0" /><strong className="font-medium">{sellingPointMode ? `${count} 条卖点` : `循环 ${count} 次`}</strong><ArrowRight className="size-3.5 shrink-0" /><span>右侧流程</span>
+            </div>
+        </div>
+    );
+}
 
 function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererProps) {
     return (
@@ -576,6 +670,29 @@ function ResourceLabelBadge({ reference }: { reference: CanvasResourceReference 
     );
 }
 
+function GlobalImageIndexBadge({ value }: { value: string }) {
+    return (
+        <span className="pointer-events-none absolute left-1 top-full z-[60] mt-1 rounded-md border border-white/15 bg-black/15 px-1.5 py-0.5 font-mono text-[9px] font-medium text-white/75 shadow-sm backdrop-blur-md backdrop-saturate-150">
+            {value}
+        </span>
+    );
+}
+
+function LoopInputOrderBadge({ orders }: { orders: Array<{ loopId: string; loopTitle: string; index: number }> }) {
+    const primary = orders[0];
+    const title = orders.map((order) => `${order.loopTitle}：第 ${order.index} 个输入`).join("\n");
+    return (
+        <span
+            className="pointer-events-none absolute bottom-2 left-2 z-30 inline-flex h-6 items-center gap-1 rounded-md border border-white/20 bg-black/65 px-2 text-[10px] font-semibold tabular-nums text-white shadow-sm backdrop-blur-sm"
+            title={title}
+        >
+            <Repeat2 className="size-3" />
+            循环 {primary.index}
+            {orders.length > 1 ? <span className="opacity-60">+{orders.length - 1}</span> : null}
+        </span>
+    );
+}
+
 function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
@@ -634,7 +751,144 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">空视频节点</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <CanvasVideoPlayer src={node.metadata.content} title={node.title} />;
+}
+
+function CanvasVideoPlayer({ src, title }: { src: string; title: string }) {
+    const playerRef = useRef<HTMLDivElement>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [duration, setDuration] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [playing, setPlaying] = useState(false);
+    const [muted, setMuted] = useState(false);
+    const [ready, setReady] = useState(false);
+
+    useEffect(() => {
+        setDuration(0);
+        setCurrentTime(0);
+        setPlaying(false);
+        setReady(false);
+    }, [src]);
+
+    const togglePlayback = () => {
+        const video = videoRef.current;
+        if (!video) return;
+        if (video.paused) {
+            if (video.ended) video.currentTime = 0;
+            void video.play();
+        } else {
+            video.pause();
+        }
+    };
+    const toggleMute = () => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.muted = !video.muted;
+        setMuted(video.muted);
+    };
+    const openFullscreen = () => {
+        const player = playerRef.current;
+        if (player?.requestFullscreen) void player.requestFullscreen();
+    };
+    const stopPointer = (event: React.SyntheticEvent) => event.stopPropagation();
+
+    return (
+        <div
+            ref={playerRef}
+            className="group/video relative h-full w-full overflow-hidden rounded-[inherit] bg-[#080808]"
+            data-canvas-no-zoom
+            onDoubleClick={(event) => {
+                event.stopPropagation();
+                openFullscreen();
+            }}
+        >
+            <video
+                ref={videoRef}
+                src={src}
+                title={title}
+                className="block h-full w-full object-contain"
+                controls={false}
+                playsInline
+                preload="metadata"
+                onClick={(event) => {
+                    event.stopPropagation();
+                    togglePlayback();
+                }}
+                onLoadedMetadata={(event) => {
+                    setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0);
+                    setCurrentTime(event.currentTarget.currentTime || 0);
+                    setReady(true);
+                }}
+                onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                onDurationChange={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
+            />
+
+            {!ready ? (
+                <div className="pointer-events-none absolute inset-0 grid place-items-center text-white/70">
+                    <LoaderCircle className="size-6 animate-spin" />
+                </div>
+            ) : null}
+
+            <button
+                type="button"
+                aria-label={playing ? "暂停视频" : "播放视频"}
+                className={`absolute left-1/2 top-1/2 z-10 grid size-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white shadow-[0_8px_24px_rgba(0,0,0,.22)] backdrop-blur-sm transition duration-200 hover:scale-105 hover:bg-black/70 ${playing ? "opacity-0 group-hover/video:opacity-100" : "opacity-100"}`}
+                onMouseDown={stopPointer}
+                onPointerDown={stopPointer}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    togglePlayback();
+                }}
+            >
+                {playing ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}
+            </button>
+
+            <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2.5 pt-8 text-white opacity-0 transition-opacity duration-200 group-hover/video:opacity-100 focus-within:opacity-100">
+                <div className="flex h-7 items-center gap-1.5 text-[11px] tabular-nums">
+                    <button type="button" aria-label={playing ? "暂停视频" : "播放视频"} className="grid size-7 place-items-center rounded-full transition hover:bg-white/15" onMouseDown={stopPointer} onPointerDown={stopPointer} onClick={(event) => { event.stopPropagation(); togglePlayback(); }}>
+                        {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="ml-0.5 size-3.5 fill-current" />}
+                    </button>
+                    <span className="min-w-0 opacity-90">{formatPlaybackTime(currentTime)} / {formatPlaybackTime(duration)}</span>
+                    <span className="flex-1" />
+                    <button type="button" aria-label={muted ? "取消静音" : "静音"} className="grid size-7 place-items-center rounded-full transition hover:bg-white/15" onMouseDown={stopPointer} onPointerDown={stopPointer} onClick={(event) => { event.stopPropagation(); toggleMute(); }}>
+                        {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                    </button>
+                    <button type="button" aria-label="全屏播放" className="grid size-7 place-items-center rounded-full transition hover:bg-white/15" onMouseDown={stopPointer} onPointerDown={stopPointer} onClick={(event) => { event.stopPropagation(); openFullscreen(); }}>
+                        <Maximize2 className="size-3.5" />
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function GenerationDurationBadge({ durationMs }: { durationMs: number }) {
+    return (
+        <span
+            className="pointer-events-none absolute left-2 top-2 z-20 max-w-[55%] truncate rounded-md border border-emerald-200/30 bg-emerald-600/75 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white shadow-sm backdrop-blur-sm"
+            title={`本次生成耗时 ${formatGenerationDuration(durationMs)}`}
+        >
+            耗时 {formatGenerationDuration(durationMs)}
+        </span>
+    );
+}
+
+function formatGenerationDuration(durationMs: number) {
+    if (durationMs < 1000) return `${Math.round(durationMs)} 毫秒`;
+    if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} 秒`;
+    const minutes = Math.floor(durationMs / 60_000);
+    const seconds = Math.round((durationMs % 60_000) / 1000);
+    return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+}
+
+function formatPlaybackTime(seconds: number) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+    const value = Math.floor(seconds);
+    return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -646,7 +900,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
             </div>
         );
     return (
-        <div className="flex h-full w-full flex-col justify-center gap-3 px-4" style={{ background: theme.node.fill, color: theme.node.text }}>
+        <div className="flex h-full w-full flex-col justify-center gap-3 px-4" style={{ color: theme.node.text }}>
             <div className="flex min-w-0 items-center gap-2 text-sm opacity-70">
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">音频</span>
@@ -680,7 +934,7 @@ function ImageContent({
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
-            <div className="h-full w-full overflow-hidden rounded-3xl">
+            <div className="h-full w-full overflow-hidden rounded-[inherit]">
                 <img
                     src={node.metadata!.content!}
                     alt={node.title}
@@ -778,7 +1032,7 @@ function BatchFrame({ batchCount, batchExpanded, batchOpening, batchRecovering, 
         </div>
     );
 }
-function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDown: (event: React.MouseEvent, corner: ResizeCorner) => void }) {
+function ResizeHandle({ corner, visible, onMouseDown }: { corner: ResizeCorner; visible: boolean; onMouseDown: (event: React.MouseEvent, corner: ResizeCorner) => void }) {
     const positionClass = {
         "top-left": "-left-[14px] -top-[14px] cursor-nwse-resize",
         "top-right": "-right-[14px] -top-[14px] cursor-nesw-resize",
@@ -786,7 +1040,11 @@ function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDo
         "bottom-right": "-bottom-[14px] -right-[14px] cursor-nwse-resize",
     }[corner];
 
-    return <div className={`absolute z-50 size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
+    return (
+        <div className={`absolute z-50 grid size-7 place-items-center ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)}>
+            <span className={`size-2 rounded-full border border-[#2f80ff] bg-white shadow-[0_1px_4px_rgba(47,128,255,.22)] transition-opacity duration-150 ${visible ? "opacity-100" : "opacity-0"}`} />
+        </div>
+    );
 }
 
 function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "right"; visible: boolean; onMouseDown: (event: React.MouseEvent) => void }) {
@@ -794,12 +1052,14 @@ function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "r
 
     return (
         <div
-            className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
+            className={`group/handle absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
                 side === "left" ? "-left-6" : "-right-6"
             } ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
             onMouseDown={onMouseDown}
         >
-            <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
+            <div className="grid size-4 place-items-center rounded-full border shadow-[0_2px_8px_rgba(15,23,42,.12)] backdrop-blur-md transition-transform duration-150 group-hover/handle:scale-110" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke }}>
+                <span className="size-1.5 rounded-full bg-[#8e8e93] transition-colors group-hover/handle:bg-[#2f80ff]" />
+            </div>
         </div>
     );
 }

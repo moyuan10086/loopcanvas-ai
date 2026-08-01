@@ -3,23 +3,28 @@ import { Cpu } from "lucide-react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { resolveModelPrice } from "@/lib/model-pricing";
+import { decodeChannelModel, modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
     value?: string;
     onChange: (model: string) => void;
     capability?: ModelCapability;
+    models?: string[];
     className?: string;
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, onChange, capability, models, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const options = useMemo(
+        () => Array.from(new Set([...(models || (config.channelMode === "local" && !capability) ? [value] : []), ...(models || selectableModelsByCapability(config, capability))].filter((model): model is string => Boolean(model)))),
+        [capability, config, models, value],
+    );
     const current = value || "";
 
     useEffect(() => {
@@ -57,7 +62,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
-                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
+                className="z-[1200] w-[min(34rem,calc(100vw-24px))] max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
                 position="popper"
                 align="start"
                 side="bottom"
@@ -88,10 +93,18 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
 }
 
 function ModelLabel({ config, model }: { config: AiConfig; model: string }) {
+    const decoded = decodeChannelModel(model);
+    const channel = decoded ? config.channels.find((item) => item.id === decoded.channelId) : undefined;
+    const modelName = decoded?.model || model;
+    const price = channel ? resolveModelPrice(channel, modelName) : null;
     return (
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
             <ModelIcon model={model} />
-            <span className="truncate">{modelOptionLabel(config, model)}</span>
+            <span className="min-w-0 flex-1 break-all whitespace-normal leading-5" title={modelName}>
+                {modelName}
+            </span>
+            {channel ? <span className="shrink-0 text-xs text-muted-foreground">{channel.name}</span> : null}
+            {price ? <span className="shrink-0 whitespace-nowrap text-xs font-medium tabular-nums">{price.display}</span> : null}
         </span>
     );
 }

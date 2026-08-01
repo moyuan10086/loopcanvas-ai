@@ -1,3 +1,5 @@
+export type VideoFrameMode = "reference" | "first-frame" | "first-last-frame";
+
 export type ReferenceVideo = {
     id: string;
     name: string;

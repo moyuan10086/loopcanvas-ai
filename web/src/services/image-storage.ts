@@ -2,6 +2,8 @@ import localforage from "localforage";
 
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
+import { uploadCanvasFileToAgent } from "@/services/agent-file-storage";
+import { backendConnection } from "@/services/config-sync";
 
 export type UploadedImage = {
     url: string;
@@ -16,13 +18,44 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `image:${nanoid()}`;
+    let blob: Blob;
+    if (typeof input === "string") {
+        try {
+            const response = await fetch(input);
+            if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`);
+            blob = await response.blob();
+        } catch (error) {
+            // 供应商图片常用独立域名，浏览器下载可能被 CORS 拦截；交给本地 Agent 下载，确保跨浏览器可恢复。
+            if (!/^https?:\/\//i.test(input)) throw error;
+            const meta = await readImageMeta(input);
+            if (await persistRemoteImageThroughAgent(storageKey, input)) return { url: input, storageKey, width: meta.width, height: meta.height, bytes: 0, mimeType: meta.mimeType };
+            return { url: input, storageKey: "", width: meta.width, height: meta.height, bytes: 0, mimeType: meta.mimeType };
+        }
+    } else {
+        blob = input;
+    }
     await store.setItem(storageKey, blob);
+    await uploadCanvasFileToAgent(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+}
+
+async function persistRemoteImageThroughAgent(storageKey: string, url: string) {
+    const connection = backendConnection();
+    if (!connection) return false;
+    try {
+        const response = await fetch(`${connection.url}/api/canvas-files/fetch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-canvas-agent-token": connection.token },
+            body: JSON.stringify({ storageKey, url }),
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {

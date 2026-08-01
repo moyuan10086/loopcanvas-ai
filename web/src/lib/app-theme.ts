@@ -13,6 +13,10 @@ const neutral = {
         selectText: "#171717",
         tableSelectedBg: "rgba(17, 17, 17, 0.05)",
         tableSelectedHoverBg: "rgba(17, 17, 17, 0.08)",
+        controlBorder: "#d6d3d1",
+        controlBorderHover: "#a8a29e",
+        controlBorderFocus: "#78716c",
+        controlFocusRing: "rgba(120, 113, 108, 0.16)",
     },
     dark: {
         primary: "#fafafa",
@@ -25,6 +29,10 @@ const neutral = {
         selectText: "#fafafa",
         tableSelectedBg: "rgba(255, 255, 255, 0.08)",
         tableSelectedHoverBg: "rgba(255, 255, 255, 0.12)",
+        controlBorder: "#44403c",
+        controlBorderHover: "#78716c",
+        controlBorderFocus: "#a8a29e",
+        controlFocusRing: "rgba(214, 211, 209, 0.14)",
     },
 };
 
@@ -41,10 +49,23 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLinkHover: color.primaryHover,
             colorLinkActive: color.primary,
             colorTextLightSolid: color.primaryText,
+            borderRadius: 8,
+            borderRadiusLG: 12,
+            controlHeight: 36,
         },
         components: {
             Button: {
                 primaryShadow: "none",
+            },
+            Input: {
+                activeBorderColor: color.controlBorderFocus,
+                activeShadow: `0 0 0 3px ${color.controlFocusRing}`,
+                hoverBorderColor: color.controlBorderHover,
+            },
+            InputNumber: {
+                activeBorderColor: color.controlBorderFocus,
+                activeShadow: `0 0 0 3px ${color.controlFocusRing}`,
+                hoverBorderColor: color.controlBorderHover,
             },
             Menu: {
                 itemActiveBg: color.menuBg,
@@ -56,6 +77,9 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
                 darkItemSelectedColor: neutral.dark.menuText,
             },
             Select: {
+                activeBorderColor: color.controlBorderFocus,
+                activeOutlineColor: color.controlFocusRing,
+                hoverBorderColor: color.controlBorderHover,
                 optionActiveBg: color.selectActiveBg,
                 optionSelectedBg: color.selectSelectedBg,
                 optionSelectedColor: color.selectText,

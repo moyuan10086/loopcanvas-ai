@@ -1,17 +1,20 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, Copy, Expand, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Shapes, Sparkles, Spline, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
+export type ImageNodeActionToolId = "aiShortcuts" | "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "outpaint" | "split" | "vectorize" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | "edit" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
+    onAiShortcuts: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
+    onOutpaint: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
+    onVectorize: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onSuperResolve: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
@@ -36,11 +39,25 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v6";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v8";
+export const IMAGE_TOOLBAR_LABEL_LIMIT = 8;
+
+export function showImageToolbarLabels(enabled: boolean, toolCount: number) {
+    return enabled && toolCount <= IMAGE_TOOLBAR_LABEL_LIMIT;
+}
 
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
+    {
+        id: "aiShortcuts",
+        defaultVisible: true,
+        panelLabel: "AI 快捷功能",
+        label: "AI 快捷",
+        title: "打开视角调整、三视图、九宫格、光影校正和画面推演快捷功能",
+        icon: () => <Shapes className="size-4" />,
+        run: (node, handlers) => handlers.onAiShortcuts(node),
+    },
     {
         id: "copyPrompt",
         defaultVisible: true,
@@ -97,6 +114,15 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onCrop(node),
     },
     {
+        id: "outpaint",
+        defaultVisible: true,
+        panelLabel: "扩图",
+        label: "扩图",
+        title: "向外扩展画面并用 AI 补全新区域",
+        icon: () => <Expand className="size-4" />,
+        run: (node, handlers) => handlers.onOutpaint(node),
+    },
+    {
         id: "split",
         defaultVisible: true,
         panelLabel: "切图",
@@ -104,6 +130,15 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         title: "按行列切分图片",
         icon: () => <Grid2x2 className="size-4" />,
         run: (node, handlers) => handlers.onSplit(node),
+    },
+    {
+        id: "vectorize",
+        defaultVisible: true,
+        panelLabel: "矢量化",
+        label: "矢量化",
+        title: "将位图转换为可缩放 SVG",
+        icon: () => <Spline className="size-4" />,
+        run: (node, handlers) => handlers.onVectorize(node),
     },
     {
         id: "upscale",
@@ -126,9 +161,9 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     {
         id: "angle",
         defaultVisible: false,
-        panelLabel: "多角度",
-        label: "多角度",
-        title: "生成角度",
+        panelLabel: "视角调整",
+        label: "视角调整",
+        title: "拖动或精调参数生成新的相机视角",
         icon: () => <Camera className="size-4" />,
         run: (node, handlers) => handlers.onAngle(node),
     },

@@ -1,6 +1,7 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { normalizeVideoFrameMode, videoFrameReferenceLabel } from "@/lib/video-frame-mode";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
@@ -18,13 +19,14 @@ export type CanvasResourceReference = {
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
     const contextNodes = contextNodeId ? getMentionResourceNodes(contextNodeId, nodes, connections) : [];
+    const contextNode = contextNodeId ? nodes.find((node) => node.id === contextNodeId) : undefined;
     const globalReferences = labelResourceNodes(nodes.filter(isResourceNode), false);
-    const activeByNodeId = new Map(labelResourceNodes(contextNodes, true).map((reference) => [reference.nodeId, reference]));
+    const activeByNodeId = new Map(labelResourceNodes(contextNodes, true, videoFrameModeForNode(contextNode)).map((reference) => [reference.nodeId, reference]));
     return globalReferences.map((reference) => activeByNodeId.get(reference.nodeId) || reference);
 }
 
 export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true, videoFrameModeForNode(node));
 }
 
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -45,10 +47,17 @@ export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData
 }
 
 function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return connections
-        .filter((connection) => connection.toNodeId === nodeId)
-        .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
-        .filter((node): node is CanvasNodeData => Boolean(node && isResourceNode(node)));
+    const visited = new Set<string>();
+    const collect = (currentId: string): CanvasNodeData[] => {
+        if (visited.has(currentId)) return [];
+        visited.add(currentId);
+        return connections
+            .filter((connection) => connection.toNodeId === currentId)
+            .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
+            .filter((node): node is CanvasNodeData => Boolean(node))
+            .flatMap((node) => (isResourceNode(node) ? [node] : node.type === CanvasNodeType.Loop ? collect(node.id) : []));
+    };
+    return Array.from(new Map(collect(nodeId).map((node) => [node.id, node])).values());
 }
 
 function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -57,13 +66,13 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
     return getContextResourceNodes(configConnection.toNodeId, nodes, connections).filter((node) => node.id !== nodeId);
 }
 
-function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
+function labelResourceNodes(nodes: CanvasNodeData[], active: boolean, videoFrameMode?: unknown) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
         if (!kind) return [];
         const index = counts[kind]++;
-        const label = labelForKind(kind, index);
+        const label = labelForKind(kind, index, videoFrameMode);
         return [
             {
                 id: node.id,
@@ -79,11 +88,16 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     });
 }
 
-function labelForKind(kind: CanvasResourceKind, index: number) {
-    if (kind === "image") return imageReferenceLabel(index);
+function labelForKind(kind: CanvasResourceKind, index: number, videoFrameMode?: unknown) {
+    if (kind === "image") return videoFrameMode ? videoFrameReferenceLabel(videoFrameMode, index) : imageReferenceLabel(index);
     if (kind === "video") return seedanceReferenceLabel("video", index);
     if (kind === "audio") return seedanceReferenceLabel("audio", index);
     return `文本${index + 1}`;
+}
+
+function videoFrameModeForNode(node?: CanvasNodeData) {
+    if (node?.type === CanvasNodeType.Video || node?.metadata?.generationMode === "video") return normalizeVideoFrameMode(node.metadata?.videoFrameMode);
+    return undefined;
 }
 
 function isResourceNode(node: CanvasNodeData) {

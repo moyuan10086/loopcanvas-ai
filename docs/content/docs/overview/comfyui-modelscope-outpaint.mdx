@@ -1,0 +1,70 @@
+---
+title: ComfyUI、ModelScope 与扩图
+description: 配置 ComfyUI 与 RunningHub 工作流、ModelScope 魔塔渠道，以及使用图片扩图工具
+---
+
+# ComfyUI、ModelScope 与扩图
+
+当前版本在原有 OpenAI、Gemini、Fal 和模型调用脚本之上，增加了 ModelScope 渠道预设、ComfyUI API 工作流导入、RunningHub 工作流超分和图片扩图工具。
+
+## ModelScope 魔塔
+
+1. 打开「配置」→「渠道」，点击「添加 ModelScope」。
+2. 填写 ModelScope Access Token。
+3. 保存渠道后，到「偏好设置」选择默认图片或文本模型。
+
+预设包含 `Tongyi-MAI/Z-Image-Turbo`、`Qwen/Qwen-Image-2512`、`Qwen/Qwen-Image-Edit-2511`、`black-forest-labs/FLUX.2-klein-9B` 和常用 Qwen / MiniMax 文本模型。
+
+图片请求发送到 `/v1/images/generations`，带 `X-ModelScope-Async-Mode: true`；收到 `task_id` 后轮询 `/v1/tasks/{task_id}`，直到成功、明确失败或超时。图生图会把参考图放入 `image_url` 数组。
+
+## ComfyUI
+
+1. 启动 ComfyUI，并允许当前网页跨域访问，例如使用 `--enable-cors-header *`。
+2. 打开「配置」→「渠道」，点击「添加 ComfyUI」。
+3. 确认地址，默认是 `http://127.0.0.1:8188`。
+4. 在 ComfyUI 中导出 API 格式工作流 JSON。
+5. 点击「导入 ComfyUI 工作流」，选择 JSON 文件并保存渠道。
+6. 到「偏好设置」或画布生成配置节点选择导入的工作流。
+
+系统会自动完成以下映射：
+
+- 将当前提示词写入第一个非负面的 prompt / text / positive 输入。
+- 将连接的参考图上传到 `/upload/image`，并依次写入 LoadImage 类节点。
+- 将图片尺寸写入具有数值 `width` / `height` 输入的节点。
+- 为 `seed` / `noise_seed` 生成随机值。
+- 提交 `/prompt`，轮询 `/history/{prompt_id}`，再通过 `/view` 读取图片结果。
+
+如果工作流的输入语义比较特殊，可以在渠道模型列表中打开「调用脚本」继续调整自动生成的脚本。
+
+## RunningHub 超分
+
+1. 打开「配置」→「渠道」，点击「添加 RunningHub」。
+2. 填写 RunningHub API Key，接口地址保持 `https://www.runninghub.cn`。
+3. 在 RunningHub 工作流 ID输入框中填写工作流 ID，点击「添加超分工作流」。默认 ID `2058824859437850625` 对应 SeedVR2 高清放大工作流。
+4. 在图片节点工具栏打开「AI 超分」，选择刚添加的工作流并选择 2K 或 4K。
+
+执行时浏览器会把源图上传到 RunningHub，读取工作流中的 `LoadImage` 和 `SeedVR2VideoUpscaler` 节点，提交 `image`、`resolution` 与随机 `seed`，再轮询工作流输出图片。工作流需要至少包含一个可接收 `image` 的 `LoadImage` 节点。
+
+## 图片扩图
+
+选中已有内容的图片节点，在节点工具栏点击「扩图」。可以使用四周、左右、上下或单方向预设，也可以分别调整上、右、下、左的扩展比例。
+
+确认后系统会创建透明外延画布和对应遮罩，并调用当前图片编辑模型补全新区域。生成结果会放在原图右侧并自动连线，不会覆盖原图。
+
+限制：
+
+- 输出最长边不超过 3840px。
+- 输出宽高比不超过 3:1。
+- Qwen Image Edit 使用透明外延图和语义提示，不额外传 mask；其他 OpenAI 兼容编辑模型会同时传入扩图遮罩。
+
+## 视频抽帧
+
+选中有内容的视频节点，在节点工具栏点击“提取帧”。拖动时间轴定位画面后点击“提取当前帧”，系统会把当前画面保存为本地图片并在视频右侧创建相连的图片节点。该图片节点可以继续被 `@` 引用、参与批量生成或执行 AI 超分。
+
+## 独立循环节点
+
+从画布工具栏或创建菜单添加“循环”节点，把参考图片、视频或音频连接到循环节点，再把循环节点连接到下游生成节点。循环面板会显示将执行的步骤链，默认沿用每一步节点的原提示词，并支持按顺序或同时运行；需要批量追加指令时再打开追加指令并使用 `{{i}}` 素材序号变量。每轮都会把上一步新生成的结果交给下一步。
+
+## 参考与许可证
+
+功能调研参考了 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) 的公开产品设计。该仓库使用自定义非商业许可证，本项目使用 AGPL-3.0，两者许可条款不兼容，因此这里只复用了公开接口知识和交互思路，具体实现为独立编写，未复制对方源码。

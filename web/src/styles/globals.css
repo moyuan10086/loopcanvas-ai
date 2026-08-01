@@ -388,6 +388,7 @@
     .canvas-control-select.ant-select-focused .ant-select-selector,
     .canvas-control-number.ant-input-number-focused {
         border-color: #a8a29e !important;
+        box-shadow: 0 0 0 3px rgba(120, 113, 108, 0.16) !important;
     }
 
     .dark .canvas-control-select.ant-select .ant-select-selector,
@@ -398,6 +399,7 @@
     .dark .canvas-control-select.ant-select-focused .ant-select-selector,
     .dark .canvas-control-number.ant-input-number-focused {
         border-color: #78716c !important;
+        box-shadow: 0 0 0 3px rgba(214, 211, 209, 0.14) !important;
     }
 
     .canvas-image-settings-popover .ant-popover-inner {

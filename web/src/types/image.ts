@@ -5,4 +5,7 @@ export type ReferenceImage = {
     dataUrl: string;
     url?: string;
     storageKey?: string;
+    canvasLabel?: string;
+    canvasTitle?: string;
+    globalImageId?: string;
 };

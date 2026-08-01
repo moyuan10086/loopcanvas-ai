@@ -9,6 +9,9 @@ import { randomId } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useAgentStore, type AgentAttachment, type AgentChatItem, type AgentEventLog, type AgentPanelTab, type AgentPendingToolCall, type AgentThreadSummary } from "@/stores/use-agent-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasBackendSave, initializeCanvasSync } from "@/services/canvas-sync";
+import { refreshApiUsageLogs } from "@/services/api-usage";
 import { summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool, SITE_TOOL_LABELS } from "@/lib/agent/agent-site-tools";
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentPendingToolCard, AgentWorkingMessage, type CanvasAgentChatAttachment } from "./canvas-agent-chat-ui";
@@ -39,6 +42,26 @@ type AgentWorkspace = { workspacePath: string; activeThreadId?: string };
 type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; data?: AgentThreadSummary[] };
 type AgentThreadResponse = { ok?: boolean; workspace?: AgentWorkspace; thread?: AgentThreadSummary; messages?: AgentChatItem[] };
 type AgentConfigResponse = { ok?: boolean; url?: string; token?: string; hasToken?: boolean };
+
+function syncCanvasProjectsAfterAgentConnection() {
+    const sync = () => {
+        const state = useCanvasStore.getState();
+        const localProjects = state.projects;
+        void initializeCanvasSync(localProjects, { force: true }).then(async (projects) => {
+            const latest = useCanvasStore.getState();
+            const projectsToSave = latest.projects === localProjects ? projects : latest.projects;
+            if (latest.projects === localProjects) latest.replaceProjects(projects);
+            await flushCanvasBackendSave(projectsToSave);
+        });
+    };
+    if (useCanvasStore.getState().hydrated) return sync();
+    let unsubscribe: (() => void) | undefined;
+    unsubscribe = useCanvasStore.subscribe((state) => {
+        if (!state.hydrated) return;
+        unsubscribe?.();
+        sync();
+    });
+}
 
 export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { embedded?: boolean; headless?: boolean; autoConnect?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -107,6 +130,8 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             setAgentState({ connected: true, activity: "已连接", connectError: "", silentConnect: false, messages: useAgentStore.getState().messages.filter((item) => !isConnectionErrorMessage(item)) });
             if (!headless) message.success("本地 Agent 已连接");
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
+            syncCanvasProjectsAfterAgentConnection();
+            void refreshApiUsageLogs();
         });
         source.addEventListener("tool_call", (event) => {
             const data = parseEventData<AgentPendingToolCall>(event);
@@ -359,6 +384,9 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             return;
         }
         errorLoggedRef.current = false;
+        localStorage.setItem("canvas-agent-url", nextEndpoint);
+        localStorage.setItem("canvas-agent-token", nextToken);
+        if (urlToken) clearAgentConnectionParams();
         setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, activity: "连接中", connectError: "", activeTab: "setup" });
     };
 
@@ -578,6 +606,13 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
 
     if (headless) return null;
     return embedded ? content : null;
+}
+
+function clearAgentConnectionParams() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("agentUrl");
+    url.searchParams.delete("agentToken");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function AgentLogView({ logs, theme, context, onClear, onCopied, onCopyBlocked }: { logs: AgentEventLog[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; context: AgentLogContext; onClear: () => void; onCopied: (text: string) => void; onCopyBlocked: (text: string) => void }) {

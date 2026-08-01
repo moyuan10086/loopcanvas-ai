@@ -16,6 +16,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "视频" },
     [CanvasNodeType.Audio]: { width: 340, height: 120, title: "音频" },
     [CanvasNodeType.Group]: { width: 760, height: 480, title: "组" },
+    [CanvasNodeType.Loop]: { width: 460, height: 520, title: "循环" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 export const NODE_SPECS = {
@@ -42,6 +43,24 @@ export const NODE_SPECS = {
     [CanvasNodeType.Group]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Group],
         metadata: { status: "idle" },
+    },
+    [CanvasNodeType.Loop]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Loop],
+        metadata: {
+            status: "idle",
+            loopCount: 3,
+            loopMode: "serial",
+            loopTaskMode: "standard",
+            loopPrompt: "",
+            loopPrompts: [""],
+            loopPromptEnabled: false,
+            loopUseTargetPrompts: true,
+            loopImageInput: true,
+            loopImageBatchSize: 1,
+            loopStart: 1,
+            loopImplicitReferences: true,
+            loopRound: 0,
+        },
     },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;
 

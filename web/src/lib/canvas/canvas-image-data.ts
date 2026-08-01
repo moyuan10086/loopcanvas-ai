@@ -34,6 +34,38 @@ export type ImageSplitPiece = {
     dataUrl: string;
 };
 
+export type ImageOutpaintMargins = {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+};
+
+export type ImageOutpaintResult = {
+    dataUrl: string;
+    maskDataUrl: string;
+    width: number;
+    height: number;
+};
+
+export type ImageOutpaintSize = {
+    width: number;
+    height: number;
+};
+
+export const MAX_OUTPAINT_EDGE = 3840;
+
+export function resolveOutpaintSize(imageWidth: number, imageHeight: number, margins: ImageOutpaintMargins): ImageOutpaintSize {
+    const left = Math.max(0, Math.round(imageWidth * clampPercent(margins.left)));
+    const right = Math.max(0, Math.round(imageWidth * clampPercent(margins.right)));
+    const top = Math.max(0, Math.round(imageHeight * clampPercent(margins.top)));
+    const bottom = Math.max(0, Math.round(imageHeight * clampPercent(margins.bottom)));
+    return {
+        width: roundToStep(imageWidth + left + right, 16),
+        height: roundToStep(imageHeight + top + bottom, 16),
+    };
+}
+
 export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     const image = await loadImage(dataUrl);
     if (crop) {
@@ -43,6 +75,36 @@ export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     const sx = Math.max(0, Math.floor((image.width - size) / 2));
     const sy = Math.max(0, Math.floor((image.height - size) / 2));
     return drawCrop(image, sx, sy, size, size);
+}
+
+export async function outpaintDataUrl(dataUrl: string, margins: ImageOutpaintMargins): Promise<ImageOutpaintResult> {
+    const image = await loadImage(dataUrl);
+    const left = Math.max(0, Math.round(image.width * clampPercent(margins.left)));
+    const right = Math.max(0, Math.round(image.width * clampPercent(margins.right)));
+    const top = Math.max(0, Math.round(image.height * clampPercent(margins.top)));
+    const bottom = Math.max(0, Math.round(image.height * clampPercent(margins.bottom)));
+    const { width, height } = resolveOutpaintSize(image.width, image.height, margins);
+    if (width > MAX_OUTPAINT_EDGE || height > MAX_OUTPAINT_EDGE) throw new Error(`扩图尺寸不能超过 ${MAX_OUTPAINT_EDGE}px`);
+    if (Math.max(width, height) / Math.min(width, height) > 3) throw new Error("扩图后的宽高比不能超过 3:1");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器无法创建扩图画布");
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, left, top, image.width, image.height);
+
+    const mask = document.createElement("canvas");
+    mask.width = width;
+    mask.height = height;
+    const maskContext = mask.getContext("2d");
+    if (!maskContext) throw new Error("浏览器无法创建扩图遮罩");
+    maskContext.clearRect(0, 0, width, height);
+    maskContext.fillStyle = "#ffffff";
+    maskContext.fillRect(left, top, image.width, image.height);
+
+    return { dataUrl: canvas.toDataURL("image/png"), maskDataUrl: mask.toDataURL("image/png"), width, height };
 }
 
 export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): Promise<ImageSplitPiece[]> {
@@ -171,4 +233,12 @@ function loadImage(dataUrl: string) {
         image.onload = () => resolve(image);
         image.src = dataUrl;
     });
+}
+
+function clampPercent(value: number) {
+    return Math.min(200, Math.max(0, Number(value) || 0)) / 100;
+}
+
+function roundToStep(value: number, step: number) {
+    return Math.max(step, Math.ceil(value / step) * step);
 }

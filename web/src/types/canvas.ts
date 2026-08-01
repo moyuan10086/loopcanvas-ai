@@ -1,3 +1,5 @@
+import type { VideoFrameMode } from "@/types/media";
+
 export type Position = {
     x: number;
     y: number;
@@ -16,6 +18,7 @@ export enum CanvasNodeType {
     Video = "video",
     Audio = "audio",
     Group = "group",
+    Loop = "loop",
 }
 
 // 节点类型放开为字符串,内置类型用 CanvasNodeType,插件类型为 "<pluginId>:<name>"
@@ -31,6 +34,8 @@ export type CanvasNodeMetadata = {
     prompt?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
+    superResolutionUseWallet?: boolean;
+    runningHubTaskId?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;
@@ -41,13 +46,19 @@ export type CanvasNodeMetadata = {
     count?: number;
     seconds?: string;
     vquality?: string;
+    videoFrameMode?: VideoFrameMode;
     generateAudio?: string;
     watermark?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
     audioInstructions?: string;
+    audioMusicLyrics?: string;
+    audioMusicInstrumental?: string;
     references?: string[];
+    referenceNodeIds?: string[];
+    referenceLabels?: string[];
+    globalImageId?: string;
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
@@ -55,14 +66,37 @@ export type CanvasNodeMetadata = {
     batchRootId?: string;
     batchChildIds?: string[];
     batchUsesReferenceImages?: boolean;
+    implicitReferences?: boolean;
     primaryImageId?: string;
     imageBatchExpanded?: boolean;
+    imageOperation?: "superResolution";
+    superResolutionTarget?: number;
     storageKey?: string;
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    generationStartedAt?: number;
+    generationDurationMs?: number;
     groupId?: string;
     interactive?: boolean; // 插件节点「交互 ⇄ 移动」开关状态(见 CanvasNodeDefinition.interactionToggle)
+    loopCount?: number;
+    loopMode?: "serial" | "parallel";
+    loopTaskMode?: "standard" | "selling-points";
+    loopSellingPointPrompt?: string;
+    loopSellingPointConcurrencyVersion?: number;
+    loopPrompt?: string;
+    loopPrompts?: string[];
+    loopPromptEnabled?: boolean;
+    loopUseTargetPrompts?: boolean;
+    loopImageInput?: boolean;
+    loopImageBatchSize?: number;
+    loopStart?: number;
+    loopImplicitReferences?: boolean;
+    loopFixedReferenceNodeId?: string;
+    loopFixedReferenceNodeIds?: string[];
+    loopFixedReferenceOwnerId?: string;
+    loopRound?: number;
+    loopGeneratedByNodeId?: string;
 };
 
 export type CanvasNodeData = {

@@ -6,6 +6,7 @@
     "quick-start",
     "codex-app-plugin",
     "features",
+    "comfyui-modelscope-outpaint",
     "render",
     "docker",
     "third-party-prompt-repositories",

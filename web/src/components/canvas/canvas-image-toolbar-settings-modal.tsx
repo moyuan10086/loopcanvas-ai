@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { Button, Card, Checkbox, Form, Modal, Space, Switch, Tag, Tooltip, Typography, theme as antdTheme } from "antd";
 import { Ellipsis, Image as ImageIcon, Settings2 } from "lucide-react";
 
-import type { ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { IMAGE_TOOLBAR_LABEL_LIMIT, showImageToolbarLabels, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 export type ImageToolbarSettingsTool = {
     id: ImageQuickToolId;
@@ -58,6 +58,7 @@ export function ImageToolSettingsModal({
         ...selectedTools,
         { id: "more", title: "配置快捷工具", label: "更多", icon: <Ellipsis className="size-4" />, active: true },
     ];
+    const effectiveShowLabels = showImageToolbarLabels(showLabels, previewTools.length);
 
     const syncPreviewScroll = useCallback(() => {
         const toolbar = previewToolbarRef.current;
@@ -130,7 +131,7 @@ export function ImageToolSettingsModal({
             footer={
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                        <span>显示按钮文字</span>
+                        <span>显示按钮文字{previewTools.length > IMAGE_TOOLBAR_LABEL_LIMIT ? `（超过 ${IMAGE_TOOLBAR_LABEL_LIMIT} 项自动收起）` : ""}</span>
                         <Switch checked={showLabels} onChange={onShowLabelsChange} />
                     </div>
                     <Space>
@@ -164,7 +165,7 @@ export function ImageToolSettingsModal({
                         onScroll={syncPreviewScroll}
                     >
                         {previewTools.map((tool) => (
-                            <PreviewToolbarItem key={tool.id} tool={tool} showLabels={showLabels} />
+                            <PreviewToolbarItem key={tool.id} tool={tool} showLabels={effectiveShowLabels} />
                         ))}
                     </div>
                     <div

@@ -4,6 +4,23 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "@/types/canvas";
 
+function connectionPath(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+) {
+    const horizontalDistance = endX - startX;
+    if (horizontalDistance >= 32) {
+        const curvature = Math.min(180, Math.max(16, horizontalDistance * 0.45));
+        return `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+    }
+
+    const verticalDistance = Math.abs(endY - startY);
+    const curvature = Math.min(160, Math.max(48, verticalDistance * 0.18 + Math.abs(horizontalDistance) * 0.08));
+    return `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+}
+
 export function ConnectionPath({
     connection,
     from,
@@ -24,9 +41,7 @@ export function ConnectionPath({
     const startY = from.position.y + from.height / 2;
     const endX = to.position.x;
     const endY = to.position.y + to.height / 2;
-    const dx = Math.abs(endX - startX);
-    const curvature = Math.max(dx * 0.5, 50);
-    const pathD = `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+    const pathD = connectionPath(startX, startY, endX, endY);
 
     return (
         <g>
@@ -53,6 +68,7 @@ export function ConnectionPath({
                 strokeWidth={active ? 3 : 2}
                 strokeOpacity={active ? 1 : 0.82}
                 fill="none"
+                strokeLinecap="round"
                 style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
             />
         </g>
@@ -71,8 +87,7 @@ export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { nod
     const snappedStartY = handle.handleType === "target" && target ? target.position.y + target.height / 2 : startY;
     const snappedEndX = handle.handleType === "source" && target ? target.position.x : endX;
     const snappedEndY = handle.handleType === "source" && target ? target.position.y + target.height / 2 : endY;
-    const distance = Math.abs(snappedEndX - snappedStartX);
-    const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
+    const pathD = connectionPath(snappedStartX, snappedStartY, snappedEndX, snappedEndY);
 
-    return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
+    return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" strokeLinecap="round" fill="none" strokeDasharray="5,5" />;
 }

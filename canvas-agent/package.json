@@ -21,6 +21,7 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@openai/codex": "^0.139.0",
     "express": "^5.1.0",
+    "undici": "^6.27.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {

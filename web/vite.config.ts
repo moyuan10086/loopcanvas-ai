@@ -50,4 +50,18 @@ export default defineConfig({
         __APP_VERSION__: JSON.stringify(localVersion),
         __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
     },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (!id.includes("node_modules")) return;
+                    if (id.includes("/node_modules/react/") || id.includes("/node_modules/react-dom/") || id.includes("/node_modules/react-router")) return "react-vendor";
+                    if (id.includes("antd/") || id.includes("@ant-design/")) return "antd-vendor";
+                    if (id.includes("@codemirror/") || id.includes("@uiw/react-codemirror")) return "editor-vendor";
+                    if (id.includes("/node_modules/motion/")) return "motion-vendor";
+                    if (id.includes("/node_modules/streamdown/")) return "markdown-vendor";
+                },
+            },
+        },
+    },
 });

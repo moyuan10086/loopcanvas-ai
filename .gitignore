@@ -9,9 +9,12 @@ data/
 .DS_Store
 .idea
 web/dist
+web/.vite/
+/.playwright-cli/
+/output/
+/[{]for(const
 
 **/dist
 web/public/plugins
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
-web/public/plugins
