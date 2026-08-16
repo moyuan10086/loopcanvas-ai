@@ -1,5 +1,7 @@
 # LoopCanvas AI
 
+<p align="right"><a href="README.zh-CN.md">简体中文文档</a></p>
+
 <p align="center">
   <img src="web/public/logo.svg" width="96" alt="LoopCanvas AI logo">
 </p>
