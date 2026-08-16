@@ -34,8 +34,9 @@ const awesomeGpt4oImagePromptsBase = "https://raw.githubusercontent.com/ImgEdify
 const youMindGptImage2RawBase = "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main";
 const youMindNanoBananaProRawBase = "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main";
 const davidWuGptImage2RawBase = "https://raw.githubusercontent.com/davidwuw0811-boop/awesome-gpt-image2-prompts/main";
+const freestyleflyGptImage2RawBase = "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main";
 const cacheTtlMs = 1000 * 60 * 60;
-const promptCacheKey = "third-party-prompts-v4";
+const promptCacheKey = "third-party-prompts-v5";
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
 const categories: PromptCategory[] = [
@@ -44,6 +45,7 @@ const categories: PromptCategory[] = [
     { category: "youmind-gpt-image-2", githubUrl: "https://github.com/YouMind-OpenLab/awesome-gpt-image-2", build: () => buildYouMindPrompts(youMindGptImage2RawBase, "youmind-gpt-image-2", "gpt-image-2") },
     { category: "youmind-nano-banana-pro", githubUrl: "https://github.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts", build: () => buildYouMindPrompts(youMindNanoBananaProRawBase, "youmind-nano-banana-pro", "nano-banana-pro") },
     { category: "davidwu-gpt-image2-prompts", githubUrl: "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts", build: buildDavidWuGptImage2Prompts },
+    { category: "freestylefly-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", build: buildFreestyleflyGptImage2Prompts },
 ];
 
 let loadingPrompts: Promise<Prompt[]> | null = null;
@@ -155,6 +157,20 @@ async function buildDavidWuGptImage2Prompts() {
         .filter((item): item is Omit<Prompt, "category" | "githubUrl"> => Boolean(item));
 }
 
+async function buildFreestyleflyGptImage2Prompts() {
+    const markdown = await fetchText(freestyleflyGptImage2RawBase, "docs/templates.md");
+    const items: Omit<Prompt, "category" | "githubUrl">[] = [];
+    for (const block of splitBeforeHeading(markdown, "### ")) {
+        const title = firstMatch(block, /^###\s+(.+)$/m).replace(/^[^\p{L}\p{N}]+/u, "").trim();
+        if (!title || /提示词模板与防坑指南/i.test(title)) continue;
+        const prompt = firstMatch(block, /\*\*(?:常规模板|模板)\*\*[\s\S]*?```(?:text|json)?\r?\n([\s\S]*?)\r?\n```/i).trim() || firstMatch(block, /```(?:text|json)?\r?\n([\s\S]*?)\r?\n```/i).trim();
+        if (!prompt) continue;
+        const tags = ["gpt-image-2", "freestylefly", ...splitTags(title, /[与和、/]/)].filter(Boolean);
+        items.push(defaultPrompt(`freestylefly-gpt-image-2-${leftPad(items.length + 1)}`, title, prompt, "", tags, "", extractFreestyleflyNote(block)));
+    }
+    return items;
+}
+
 function defaultPrompt(id: string, title: string, prompt: string, coverUrl: string, tags: string[], preview: string, note = ""): Omit<Prompt, "category" | "githubUrl"> {
     return { id, title, coverUrl, prompt, tags, preview, note, createdAt: "", updatedAt: "" };
 }
@@ -233,6 +249,10 @@ function markdownPreview(images: string[]) {
 
 function extractPromptNote(markdown: string) {
     return firstMatch(markdown, /^\*\*(?:Comment|说明):\*\*\s*(.+)$/m).trim();
+}
+
+function extractFreestyleflyNote(markdown: string) {
+    return firstMatch(markdown, /^\*\*(?:避坑指南|防坑指南)\*\*[\s\S]*?(?:\r?\n[-*]\s+(.+))?/m).trim();
 }
 
 function collectTags(items: Prompt[]) {

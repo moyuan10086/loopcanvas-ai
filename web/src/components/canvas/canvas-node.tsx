@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowRight, ChevronRight, Group, Image as ImageIcon, LoaderCircle, Maximize2, Music2, Pause, Play, Puzzle, RefreshCw, Repeat2, ShoppingBag, Star, Video, Volume2, VolumeX } from "lucide-react";
+import { ArrowRight, ChevronRight, Copy, Download, Group, Image as ImageIcon, LoaderCircle, Maximize2, Music2, Pause, Play, Puzzle, RefreshCw, Repeat2, ShoppingBag, Star, Trash2, Video, Volume2, VolumeX } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -61,6 +61,8 @@ type CanvasNodeProps = {
     onTitleChange: (nodeId: string, title: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
+    onDuplicateBatchImage?: (node: CanvasNodeData) => void;
+    onDeleteBatchImage?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
@@ -86,6 +88,8 @@ type NodeContentRendererProps = {
     onGenerateImage?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onDuplicateBatchImage?: () => void;
+    onDeleteBatchImage?: () => void;
     groupChildCount: number;
 };
 
@@ -124,6 +128,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     onTitleChange,
     onToggleBatch,
     onSetBatchPrimary,
+    onDuplicateBatchImage,
+    onDeleteBatchImage,
     onRetry,
     onGenerateImage,
     onViewImage,
@@ -469,6 +475,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onGenerateImage={onGenerateImage}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
+                        onDuplicateBatchImage={() => onDuplicateBatchImage?.(data)}
+                        onDeleteBatchImage={() => onDeleteBatchImage?.(data)}
                         groupChildCount={groupChildCount}
                     />
                 </div>
@@ -694,7 +702,7 @@ function LoopInputOrderBadge({ orders }: { orders: Array<{ loopId: string; loopT
 }
 
 function ImageNodeContent(props: NodeContentRendererProps) {
-    if (!props.node.metadata?.content && props.isBatchRoot) {
+    if (!props.node.metadata?.content && (props.isBatchRoot || Boolean(props.node.metadata?.batchRootId))) {
         const content =
             props.node.metadata?.status === "loading" ? (
                 <LoadingContent theme={props.theme} />
@@ -721,6 +729,9 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
+            onDuplicateBatchImage={props.onDuplicateBatchImage}
+            onDeleteBatchImage={props.onDeleteBatchImage}
+            onRetry={props.onRetry}
         />
     );
 }
@@ -919,6 +930,9 @@ function ImageContent({
     batchRecovering,
     onToggleBatch,
     onSetBatchPrimary,
+    onDuplicateBatchImage,
+    onDeleteBatchImage,
+    onRetry,
 }: {
     node: CanvasNodeData;
     isBatchRoot: boolean;
@@ -928,9 +942,23 @@ function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onDuplicateBatchImage?: () => void;
+    onDeleteBatchImage?: () => void;
+    onRetry?: (node: CanvasNodeData) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const downloadImage = () => {
+        const content = node.metadata?.content;
+        if (!content) return;
+        const link = document.createElement("a");
+        link.href = content;
+        link.download = `${node.title || "image"}.png`;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    };
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
@@ -961,20 +989,83 @@ function ImageContent({
                 </button>
             ) : null}
             {isBatchChild ? (
-                <button
-                    type="button"
-                    className="absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition group-hover/batch:opacity-100 hover:scale-[1.02]"
-                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onSetBatchPrimary?.();
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                >
-                    <Star className="size-3.5 text-[#2f80ff]" />
-                    设为主图
-                </button>
+                <div className="absolute right-3 top-3 z-30 flex items-center gap-1.5 opacity-0 transition group-hover/batch:opacity-100">
+                    {node.metadata?.status === "error" ? (
+                        <button
+                            type="button"
+                            className="grid size-9 place-items-center rounded-xl border shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onRetry?.(node);
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            aria-label="重试图片"
+                            title="重试图片"
+                        >
+                            <RefreshCw className="size-3.5" />
+                        </button>
+                    ) : null}
+                    <button
+                        type="button"
+                        className="grid size-9 place-items-center rounded-xl border shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            downloadImage();
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        aria-label="下载图片"
+                        title="下载图片"
+                    >
+                        <Download className="size-3.5" />
+                    </button>
+                    <button
+                        type="button"
+                        className="grid size-9 place-items-center rounded-xl border shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: "#d04444" }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteBatchImage?.();
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        aria-label="删除图片"
+                        title="删除图片"
+                    >
+                        <Trash2 className="size-3.5" />
+                    </button>
+                    <button
+                        type="button"
+                        className="flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onDuplicateBatchImage?.();
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                    >
+                        <Copy className="size-3.5" />
+                        创建副本
+                    </button>
+                    <button
+                        type="button"
+                        className="flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onSetBatchPrimary?.();
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                    >
+                        <Star className="size-3.5 text-[#2f80ff]" />
+                        设为主图
+                    </button>
+                </div>
             ) : null}
         </BatchFrame>
     );

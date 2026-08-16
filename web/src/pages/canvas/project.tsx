@@ -1479,6 +1479,36 @@ function InfiniteCanvasPage() {
         return true;
     }, [getCanvasCenter]);
 
+    const duplicateBatchImage = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return;
+        const id = nanoid();
+        const imageMetadata = { ...node.metadata };
+        delete imageMetadata.batchRootId;
+        delete imageMetadata.isBatchRoot;
+        delete imageMetadata.batchChildIds;
+        delete imageMetadata.imageBatchExpanded;
+        delete imageMetadata.errorDetails;
+        const copy: CanvasNodeData = {
+            ...node,
+            id,
+            title: node.title?.endsWith(" Copy") ? node.title : `${node.title || "图片"} Copy`,
+            position: { x: node.position.x + node.width + 96, y: node.position.y },
+            metadata: {
+                ...imageMetadata,
+                status: NODE_STATUS_SUCCESS,
+            },
+        };
+        setNodes((prev) => [...prev, copy]);
+        setSelectedNodeIds(new Set([id]));
+        setSelectedConnectionId(null);
+        setDialogNodeId(id);
+    }, []);
+
+    const deleteBatchImage = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Image || !node.metadata?.batchRootId) return;
+        deleteNodes(new Set([node.id]));
+    }, [deleteNodes]);
+
     const resetViewport = useCallback(() => {
         setViewport({ x: size.width / 2, y: size.height / 2, k: 1 });
         setContextMenu(null);
@@ -3870,6 +3900,8 @@ function InfiniteCanvasPage() {
                             onTitleChange={handleNodeTitleChange}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
+                            onDuplicateBatchImage={duplicateBatchImage}
+                            onDeleteBatchImage={deleteBatchImage}
                             onRetry={handleNodeRetry}
                             onGenerateImage={generateImageFromTextNode}
                             onViewImage={handleNodeViewImage}
