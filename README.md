@@ -174,7 +174,7 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
     cd loopcanvas-ai
     docker compose up -d
 
-启动后访问 http://localhost:3000。生产部署前请根据实际域名、反向代理和访问范围补充安全配置。
+启动后访问 [http://localhost:3000](http://localhost:3000)。生产部署前请根据实际域名、反向代理和访问范围补充安全配置。
 
 ## 渠道配置
 
