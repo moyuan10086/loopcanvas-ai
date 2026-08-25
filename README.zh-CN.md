@@ -104,16 +104,16 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 
 ### 本地开发
 
-    git clone https://github.com/moyuan10086/infinite-canvas.git
-    cd infinite-canvas
+    git clone https://github.com/moyuan10086/loopcanvas-ai.git
+    cd loopcanvas-ai
     cd web
     bun install
     bun run dev
 
 ### Docker
 
-    git clone https://github.com/moyuan10086/infinite-canvas.git
-    cd infinite-canvas
+    git clone https://github.com/moyuan10086/loopcanvas-ai.git
+    cd loopcanvas-ai
     docker compose up -d
 
 首次打开后，在配置中心填写自己的 Base URL 和 API Key。

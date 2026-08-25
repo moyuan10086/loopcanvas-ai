@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/moyuan10086/infinite-canvas"><img src="https://img.shields.io/github/stars/moyuan10086/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/moyuan10086/infinite-canvas/tags"><img src="https://img.shields.io/github/v/tag/moyuan10086/infinite-canvas?style=flat-square&label=version" alt="Version"></a>
+  <a href="https://github.com/moyuan10086/loopcanvas-ai"><img src="https://img.shields.io/github/stars/moyuan10086/loopcanvas-ai?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/moyuan10086/loopcanvas-ai/tags"><img src="https://img.shields.io/github/v/tag/moyuan10086/loopcanvas-ai?style=flat-square&label=version" alt="Version"></a>
   <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite&logoColor=white" alt="Vite"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
 </p>
@@ -160,8 +160,8 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 
 ### 本地开发
 
-    git clone https://github.com/moyuan10086/infinite-canvas.git
-    cd infinite-canvas
+    git clone https://github.com/moyuan10086/loopcanvas-ai.git
+    cd loopcanvas-ai
     cd web
     bun install
     bun run dev
@@ -170,8 +170,8 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 
 ### Docker
 
-    git clone https://github.com/moyuan10086/infinite-canvas.git
-    cd infinite-canvas
+    git clone https://github.com/moyuan10086/loopcanvas-ai.git
+    cd loopcanvas-ai
     docker compose up -d
 
 启动后访问 http://localhost:3000。生产部署前请根据实际域名、反向代理和访问范围补充安全配置。

@@ -1,7 +1,7 @@
 services:
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinite-canvas
+    image: ghcr.io/moyuan10086/loopcanvas-ai:latest
+    container_name: loopcanvas-ai
     ports:
       - "3000:3000"
     restart: unless-stopped
