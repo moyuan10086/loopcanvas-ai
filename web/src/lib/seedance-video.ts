@@ -1,4 +1,4 @@
-import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -7,9 +7,10 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     videos: 3,
     audios: 3,
     imageMaxBytes: 30 * 1024 * 1024,
-    videoMaxBytes: 50 * 1024 * 1024,
+    videoMaxBytes: 200 * 1024 * 1024,
     audioMaxBytes: 15 * 1024 * 1024,
 };
+export const SEEDANCE_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
 
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
@@ -66,9 +67,9 @@ const seedancePixels = {
     },
 } as const;
 
-export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl">) {
+export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "apiFormat">) {
     const requestConfig = "channels" in config ? resolveModelRequestConfig(config, config.model || config.videoModel) : config;
-    return isSeedanceVideoModel(modelOptionName(requestConfig.model || requestConfig.videoModel)) || isArkPlanBaseUrl(requestConfig.baseUrl);
+    return requestConfig.apiFormat === "ark";
 }
 
 export function isSeedanceVideoModel(model: string) {
@@ -175,7 +176,8 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
     for (let index = 0; index < videos.length; index += 1) {
         const video = videos[index];
         const label = seedanceReferenceLabel("video", index);
-        if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return `${label} 超过 50MB，请压缩后再上传`;
+        if (!SEEDANCE_VIDEO_MIME_TYPES.includes(video.type)) return `${label} 仅支持 mp4/mov 格式`;
+        if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return `${label} 超过 200MB，请压缩后再上传`;
         if (video.durationMs) {
             if (video.durationMs < 2000 || video.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
             totalDurationMs += video.durationMs;
@@ -185,7 +187,7 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
             const ratio = video.width / video.height;
             if (ratio < 0.4 || ratio > 2.5) return `${label} 宽高比需要在 0.4-2.5 之间`;
             const pixels = video.width * video.height;
-            if (pixels < 640 * 640 || pixels > 2206 * 946) return `${label} 像素总量不符合 Seedance 要求，请转成 480p/720p/1080p 后再上传`;
+            if (pixels < 640 * 640 || pixels > 3326 * 2494) return `${label} 总像素需要在 409600-8295044 之间`;
         }
     }
     if (totalDurationMs > 15000) return "Seedance 参考视频总时长不能超过 15 秒";

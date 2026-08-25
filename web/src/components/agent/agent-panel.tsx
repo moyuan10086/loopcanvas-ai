@@ -1,9 +1,7 @@
 import { useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Bot, PanelRightClose } from "lucide-react";
-import { Button, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 
-import { CanvasLocalAgentPanel } from "@/components/canvas/canvas-local-agent-panel";
+import { LocalAgentPanel } from "./local-agent-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -17,11 +15,7 @@ export function AgentPanel() {
     const panelMounted = useAgentStore((state) => state.panelMounted);
     const panelOpen = useAgentStore((state) => state.panelOpen);
     const panelClosing = useAgentStore((state) => state.panelClosing);
-    const confirmTools = useAgentStore((state) => state.confirmTools);
     const setAgentState = useAgentStore((state) => state.setAgentState);
-    const closePanel = useAgentStore((state) => state.closePanel);
-
-
     const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
         event.preventDefault();
         const startX = event.clientX;
@@ -50,10 +44,11 @@ export function AgentPanel() {
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
-            style={{ overflow: "clip", pointerEvents: panelClosing ? "none" : undefined }}
+            style={{ overflow: "clip", pointerEvents: panelOpen && !panelClosing ? undefined : "none" }}
         >
             <motion.aside
                 className="relative flex h-full shrink-0 flex-col border-l"
+                data-canvas-shortcuts-ignore
                 initial={{ x: 48 }}
                 animate={{ x: panelClosing ? 28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}

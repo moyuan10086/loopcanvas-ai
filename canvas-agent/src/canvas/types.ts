@@ -1,3 +1,4 @@
+/** 画布坐标。 */
 export type Position = { x: number; y: number };
 export type Viewport = { x: number; y: number; k: number };
 export type CanvasNodeType = "image" | "text" | "config" | "video" | "audio";
