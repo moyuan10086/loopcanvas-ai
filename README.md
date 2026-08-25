@@ -1,4 +1,4 @@
-# LoopCanvas AI
+<h1 align="center">LoopCanvas AI</h1>
 
 <p align="right"><a href="README.zh-CN.md">简体中文文档</a></p>
 

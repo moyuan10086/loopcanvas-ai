@@ -1,4 +1,4 @@
-# LoopCanvas AI 中文文档
+<h1 align="center">LoopCanvas AI 中文文档</h1>
 
 <p align="center">
   <img src="web/public/logo.svg" width="96" alt="LoopCanvas AI logo">
