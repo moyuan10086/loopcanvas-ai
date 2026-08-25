@@ -1,6 +1,16 @@
 <h1 align="center">LoopCanvas AI 中文文档</h1>
 
 <p align="center">
+  <a href="https://github.com/moyuan10086/loopcanvas-ai">🌐 GitHub 仓库</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/moyuan10086/loopcanvas-ai/releases">📦 Releases</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/moyuan10086/loopcanvas-ai/issues">🐛 问题反馈</a>
+  &nbsp;·&nbsp;
+  <a href="docs/">📚 项目文档</a>
+</p>
+
+<p align="center">
   <img src="web/public/logo.svg" width="96" alt="LoopCanvas AI logo">
 </p>
 
@@ -10,7 +20,7 @@
 
 LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编辑、模型成本对比和本地 Agent 放在一个工作台中。它适合自由探索视觉方案，也适合搭建换装、商品卖点图、批量超分、逐轮改图和多步骤媒体流程。
 
-## 核心能力
+## ✨ 特性
 
 ### 无限画布
 
@@ -67,7 +77,7 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 - 支持公开来源、分类、标签、关键词搜索、封面预览、复制和插入画布。
 - 包含 GPT Image 2、Nano Banana 和 Freestylefly GPT Image 2 公开模板。
 
-## 典型流程
+## 🧭 典型流程
 
 ### 模特换装
 
@@ -90,7 +100,7 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 3. 输入编号卖点。
 4. 每轮只处理一个卖点，保持商品主体一致。
 
-## 快速开始
+## 📦 安装
 
 ### Windows
 
@@ -118,7 +128,7 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 
 首次打开后，在配置中心填写自己的 Base URL 和 API Key。
 
-## 数据与隐私
+## 💾 数据与隐私
 
 - API Key 和 Base URL 默认保存在浏览器本地。
 - 连接 Canvas Agent 后，画布、节点媒体、渠道配置和 API 统计保存到 ~/.infinite-canvas/。
@@ -126,7 +136,7 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 - API 统计不保存完整提示词、上传内容或 API Key。
 - 前端会直接请求用户配置的第三方 AI 接口，请确认渠道和部署环境可信。
 
-## 文档
+## 📚 文档
 
 - [完整项目说明](README.md)
 - [功能介绍](docs/content/docs/overview/features.mdx)
@@ -136,6 +146,6 @@ LoopCanvas AI 将无限画布、多模型生成、循环批处理、参考图编
 - [项目记录](docs/PROJECT_RECORD.md)
 - [待办事项](docs/content/docs/progress/todo.mdx)
 
-## 致谢
+## 🤝 社区
 
-感谢 Infinite Canvas 开源项目以及公开提示词、模型服务和工作流社区提供的资料与实践经验。
+欢迎围绕循环节点、多模型接入和视觉生产流程提交 Issue、改进建议或 Pull Request。

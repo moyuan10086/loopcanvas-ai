@@ -1,7 +1,5 @@
 <h1 align="center">LoopCanvas AI</h1>
 
-<p align="center"><a href="README.zh-CN.md">简体中文文档</a></p>
-
 <p align="center">
   <img src="web/public/logo.svg" width="96" alt="LoopCanvas AI logo">
 </p>
@@ -9,6 +7,18 @@
 <p align="center">
   <strong>循环节点驱动的多模型视觉生产工作台</strong>
 </p>
+
+<p align="center">
+  <a href="https://github.com/moyuan10086/loopcanvas-ai">🌐 GitHub 仓库</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/moyuan10086/loopcanvas-ai/releases">📦 Releases</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/moyuan10086/loopcanvas-ai/issues">🐛 问题反馈</a>
+  &nbsp;·&nbsp;
+  <a href="docs/">📚 项目文档</a>
+</p>
+
+<p align="center"><a href="README.zh-CN.md">🇨🇳 简体中文文档</a></p>
 
 <p align="center">
   <a href="https://github.com/moyuan10086/loopcanvas-ai"><img src="https://img.shields.io/github/stars/moyuan10086/loopcanvas-ai?style=flat-square&logo=github" alt="GitHub stars"></a>
@@ -22,13 +32,13 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 > [!WARNING]
 > 项目仍在快速迭代中，画布、配置和本地存储结构可能变化。当前更适合个人或局域网使用，不建议未经访问控制和安全加固就直接开放到公网。
 
-## 为什么是 LoopCanvas
+## ❤️ 为什么是 LoopCanvas
 
 普通画布解决“把节点连起来”，LoopCanvas 更关注“让一套流程可靠地重复执行”。
 
 循环节点是系统的核心调度器。它可以按轮读取不同素材和提示词，固定复用主体参考图，依次执行右侧处理步骤，并将每轮结果独立排布在画布上。批量任务不需要手工复制节点，也不会把几十个请求一次性全部打到供应商。
 
-## 核心能力
+## ✨ 特性
 
 ### 无限画布
 
@@ -109,7 +119,7 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 - 包含 GPT Image 2、Nano Banana 等相关来源。
 - 已加入 Freestylefly GPT Image 2 公开模板。
 
-## 典型工作流
+## 🧭 典型工作流
 
 ### 同一模特批量换装
 
@@ -139,7 +149,7 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 3. 多张输入图按轮依次进入工作流。
 4. 排队任务刷新后可以继续恢复轮询。
 
-## 快速开始
+## 📦 安装
 
 ### 环境要求
 
@@ -176,7 +186,7 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 
 启动后访问 [http://localhost:3000](http://localhost:3000)。生产部署前请根据实际域名、反向代理和访问范围补充安全配置。
 
-## 渠道配置
+## 🔌 渠道配置
 
 在配置中心可以为每个渠道维护：
 
@@ -199,7 +209,7 @@ LoopCanvas AI 把无限画布、多模型生成、循环批处理、参考图编
 
 RunningHub 渠道可以分别填写消费级会员 Key 和企业级共享 Key。固定选择一种扣费方式时不会自动回退到另一把 Key；选择自动时才会按配置顺序选择可用通道。
 
-## Canvas Agent
+## 🤖 Canvas Agent
 
 Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex / Claude Code 的画布操作。
 
@@ -210,7 +220,7 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 
 也可以直接使用 Windows 一键启动脚本。网页连接 Agent 后，画布侧边栏会从本地后端拉取项目，并与浏览器离线缓存合并。
 
-## 数据保存与隐私
+## 💾 数据保存与隐私
 
 - API Key 和 Base URL 默认保存在浏览器本地。
 - 连接 Agent 后，画布、节点媒体、渠道配置和 API 统计保存到 ~/.infinite-canvas/。
@@ -219,7 +229,7 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 - 当前前端会请求用户配置的第三方 AI 接口，请确认渠道、代理和部署环境可信。
 - 项目不会在 API 统计中保存完整提示词、上传内容或 API Key。
 
-## 项目结构
+## 🗂️ 项目结构
 
     .
     ├─ web/                  React + TypeScript 前端
@@ -232,7 +242,7 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
     ├─ docs/                 使用文档和项目记录
     └─ start-infinite-canvas.cmd
 
-## 技术栈
+## 🛠️ 技术栈
 
 - React
 - TypeScript
@@ -244,7 +254,7 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 - Node.js Canvas Agent
 - IndexedDB / localForage
 
-## 开发约定
+## ⚙️ 开发约定
 
 - 外部渠道请求集中在 web/src/services/api/。
 - 画布状态优先使用现有 store、同步服务和主题系统。
@@ -252,7 +262,7 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 - 异步任务需要考虑排队、刷新恢复、停止和部分失败。
 - 修改用户可感知功能后，同步更新 CHANGELOG.md 和待测试文档。
 
-## 文档
+## 📚 文档
 
 - [快速开始](docs/content/docs/overview/quick-start.mdx)
 - [功能介绍](docs/content/docs/overview/features.mdx)
@@ -264,6 +274,6 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 - [待办事项](docs/content/docs/progress/todo.mdx)
 - [安全策略](SECURITY.md)
 
-## 社区
+## 🤝 社区
 
 LoopCanvas AI 持续吸收公开模型服务、工作流和前端工程社区的实践经验，并欢迎围绕循环节点、多模型接入和视觉生产流程提交改进建议。
