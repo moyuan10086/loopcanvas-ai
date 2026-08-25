@@ -264,6 +264,6 @@ Canvas Agent 负责本地持久化、媒体落盘、API 统计同步以及 Codex
 - [待办事项](docs/content/docs/progress/todo.mdx)
 - [安全策略](SECURITY.md)
 
-## 致谢
+## 社区
 
-感谢 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 提供最初的开源画布基础，也感谢公开提示词、模型服务和工作流社区提供的资料与实践经验。
+LoopCanvas AI 持续吸收公开模型服务、工作流和前端工程社区的实践经验，并欢迎围绕循环节点、多模型接入和视觉生产流程提交改进建议。
